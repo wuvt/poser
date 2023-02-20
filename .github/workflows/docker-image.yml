@@ -1,0 +1,90 @@
+name: Create and publish a Docker image
+
+on:
+  push:
+    branches: [master, staging, trying]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  check:
+    name: Run all tests and checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v18
+
+      - name: Setup Cachix
+        uses: cachix/cachix-action@v12
+        with:
+          name: wuvt
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+
+      - name: Evaluate Nix checks
+        run: nix flake check
+
+  build-image:
+    name: Build the Docker image
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v18
+
+      - name: Setup Cachix
+        uses: cachix/cachix-action@v12
+        with:
+          name: wuvt
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+
+      - name: Build Docker image
+        run: nix build .#poser-container
+
+      - name: Upload the built Docker image
+        uses: actions/upload-artifact@v3
+        with:
+          name: docker
+          path: result
+
+  push-image:
+    name: Publish the Docker image to GitHub
+    if: github.ref != 'refs/heads/staging' && github.ref != 'refs/heads/trying'
+    needs: build-image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the build Docker image
+        uses: actions/download-artifact@v3
+        with:
+          name: docker
+
+      - name: Generate tags
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: ghcr.io/wuvt/poser
+          sep-tags: " "
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Login to GitHub Container Registry
+        run: skopeo login -u "${{ github.actor }}" -p "${{ secrets.GITHUB_TOKEN }}" ghcr.io
+
+      - name: Push Docker image
+        run: |
+          for TAG in ${{ steps.meta.outputs.tags }}
+          do
+            skopeo copy docker-archive:result "docker://$TAG"
+          done
