@@ -1,13 +1,24 @@
 mod config;
+mod routes;
 
 use std::env::var;
 use std::fs::read_to_string;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use config::Config;
+use routes::routes;
 
 use anyhow::{Context, Result};
+use axum::Server;
 use clap::Parser;
+use tower::ServiceBuilder;
+use tower_cookies::CookieManagerLayer;
+use tower_http::{
+    trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer},
+    LatencyUnit,
+};
+use tracing::{info, Level};
 
 #[derive(Parser, Debug)]
 #[command(author, version)]
@@ -24,7 +35,13 @@ struct Args {
     config: PathBuf,
 }
 
-fn main() -> Result<()> {
+#[derive(Debug, Clone)]
+pub struct ServerState {
+    pub config: Config,
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
     init_logging();
 
     let args = Args::parse();
@@ -37,7 +54,29 @@ fn main() -> Result<()> {
     })?)
     .context("Failed to parse config file")?;
 
-    println!("{:#?}", config);
+    let state = ServerState {
+        config: config.clone(),
+    };
+
+    let app = routes().with_state(state).layer(
+        ServiceBuilder::new()
+            .layer(
+                TraceLayer::new_for_http()
+                    .on_request(DefaultOnRequest::new().level(Level::INFO))
+                    .on_response(
+                        DefaultOnResponse::new()
+                            .level(Level::INFO)
+                            .latency_unit(LatencyUnit::Micros),
+                    ),
+            )
+            .layer(CookieManagerLayer::new()),
+    );
+
+    let server =
+        Server::bind(&SocketAddr::from((config.ip, config.port))).serve(app.into_make_service());
+
+    info!("Serving on {}:{}", config.ip, config.port);
+    server.await?;
 
     Ok(())
 }
