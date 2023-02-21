@@ -1,0 +1,7 @@
+[google]
+client_id = "<client id>"
+client_secret = "<client secret>"
+allowed_domains = ["<domain>"]
+authorize_url = "https://accounts.google.com/o/oauth2/v2/auth?hd=<domain>"
+service_account_file = "/data/config/service_account.json"
+admin_email = "<admin email>"
