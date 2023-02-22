@@ -6,8 +6,11 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0"
 axum = { version = "0.6", features = ["macros"] }
+base64ct = { version = "1.5", features = ["alloc"] }
 clap = { version = "4.1", features = ["derive"] }
+pasetors = "0.6"
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 tokio = { version = "1.25", features = ["full"] }
 toml = "0.7"
 tower = "0.4"

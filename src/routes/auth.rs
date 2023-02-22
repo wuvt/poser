@@ -9,6 +9,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use tower_cookies::Cookies;
+use tracing::error;
 
 #[axum::debug_handler(state = ServerState)]
 pub async fn auth_handler(
@@ -20,7 +21,9 @@ pub async fn auth_handler(
         .get("code")
         .map(|s| StatusCode::from_str(s))
         .transpose()
-        .map_err(|_| {
+        .map_err(|e| {
+            error!("Error parsing code parameter: {}", e);
+
             (
                 StatusCode::BAD_REQUEST,
                 "Unable to parse \"code\" parameter.",

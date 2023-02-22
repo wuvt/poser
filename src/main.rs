@@ -1,4 +1,5 @@
 mod config;
+mod oidc;
 mod routes;
 
 use std::env::var;
@@ -76,7 +77,7 @@ async fn main() -> Result<()> {
         Server::bind(&SocketAddr::from((config.ip, config.port))).serve(app.into_make_service());
 
     info!("Serving on {}:{}", config.ip, config.port);
-    server.await?;
+    server.await.context("Server unexpectedly stopped")?;
 
     Ok(())
 }
