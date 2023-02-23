@@ -22,7 +22,7 @@
       cargoArtifacts = craneLib.buildDepsOnly { inherit src; };
 
     in {
-      packages."${system}" = {
+      packages."${system}" = rec {
         poser = craneLib.buildPackage {
           inherit src cargoArtifacts;
         };
@@ -44,6 +44,8 @@
             };
           }
         ) {};
+
+        default = poser;
       };
 
       checks."${system}" = {
