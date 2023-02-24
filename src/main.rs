@@ -1,4 +1,5 @@
 mod config;
+mod error;
 mod oidc;
 mod routes;
 
@@ -84,6 +85,6 @@ async fn main() -> Result<()> {
 
 fn init_logging() {
     tracing_subscriber::fmt()
-        .with_env_filter(var("RUST_LOG").unwrap_or("info".to_string()))
+        .with_env_filter(var("RUST_LOG").unwrap_or_else(|_| "info".to_string()))
         .init();
 }
