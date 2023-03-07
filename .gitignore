@@ -1,5 +1,5 @@
 result
 
-config/config.toml
+.env
 
 target/
