@@ -1,6 +1,8 @@
-mod auth;
-mod callback;
-mod login;
+//! HTTP routes for interacting with poser.
+
+pub mod auth;
+pub mod callback;
+pub mod login;
 
 use crate::ServerState;
 use auth::auth_handler;
@@ -12,6 +14,7 @@ use axum::{
     routing::{get, Router},
 };
 
+/// The complete router for this application.
 pub fn routes() -> Router<ServerState> {
     Router::new()
         .route("/auth", get(auth_handler))
@@ -20,7 +23,8 @@ pub fn routes() -> Router<ServerState> {
         .route("/ping", get(ping_handler))
 }
 
+/// A handler for a basic health check ping.
 #[axum::debug_handler(state = ServerState)]
-async fn ping_handler() -> StatusCode {
+pub async fn ping_handler() -> StatusCode {
     StatusCode::OK
 }

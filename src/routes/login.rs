@@ -1,3 +1,5 @@
+//! A route for startng the OIDC flow.
+
 use std::collections::HashMap;
 
 use crate::error::HttpError;
@@ -11,6 +13,7 @@ use axum::{
 use tower_cookies::{Cookie, Cookies};
 use tracing::error;
 
+/// A handler to start the OIDC flow.
 #[axum::debug_handler(state = ServerState)]
 pub async fn login_handler(
     State(state): State<ServerState>,

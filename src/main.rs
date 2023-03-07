@@ -1,15 +1,21 @@
+//! # poser
+//!
 //! poser is a simple, opinionated authentication provider for nginx
+//!
+//! ## About
 //!
 //! poser authenticates with Google using OpenID Connect and then uses the
 //! Google Workspace Admin SDK to determine what groups a user is a part of.
-//! Basic information about the users, as well as what groups they are a part
-//! of, is returned to nginx in a PASETO v4 token, which is then passed to the
+//! Basic information about the user and what groups they are a part of is
+//! returned to nginx in a [Paseto v4] token, which is then passed to the
 //! application.
+//!
+//! [Paseto v4]: https://github.com/paseto-standard/paseto-spec
 
-mod config;
-mod error;
-mod oidc;
-mod routes;
+pub mod config;
+pub mod error;
+pub mod oidc;
+pub mod routes;
 
 use std::env::var;
 

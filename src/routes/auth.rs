@@ -1,3 +1,5 @@
+//! A route for checking if a user is authenticated.
+
 use std::collections::HashMap;
 use std::str::FromStr;
 
@@ -11,6 +13,12 @@ use axum::{
 use tower_cookies::Cookies;
 use tracing::error;
 
+/// A handler to check the auth status of the requesting user.
+///
+/// Given an authentication cookie (or lack thereof), this route either
+/// returns 202 Accepted with a Paseto of the user or 401 Unauthorized with the
+/// configured login URL the user can be redirected to. This route also takes
+/// an optional "code" parameter to override the returned HTTP status code.
 #[axum::debug_handler(state = ServerState)]
 pub async fn auth_handler(
     State(state): State<ServerState>,

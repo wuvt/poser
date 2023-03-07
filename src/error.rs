@@ -1,8 +1,11 @@
+//! HTTP error types for handlers.
+
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 
+/// HTTP error codes that can be returned by a handler.
 #[derive(Debug)]
 pub enum HttpError {
     BadRequest(&'static str),

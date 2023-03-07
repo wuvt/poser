@@ -1,3 +1,5 @@
+//! Auth server configuration.
+
 use std::env::{var, VarError};
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -7,6 +9,7 @@ use pasetors::{keys::SymmetricKey, version4::V4};
 use thiserror::Error;
 use tracing::error;
 
+/// An error that occurs while generating the server configuration.
 #[derive(Error, Clone, Debug)]
 pub enum ConfigError {
     #[error("invalid environment variable")]
@@ -28,26 +31,27 @@ pub enum ConfigError {
 }
 
 // Environment variables for each config option
-const ENV_LISTEN_ADDR: &str = "POSER_AUTH_LISTEN_ADDR";
+pub const ENV_LISTEN_ADDR: &str = "POSER_AUTH_LISTEN_ADDR";
 
-const ENV_COOKIE_NAME: &str = "POSER_AUTH_COOKIE_NAME";
-const ENV_COOKIE_SECRET: &str = "POSER_AUTH_COOKIE_SECRET";
+pub const ENV_COOKIE_NAME: &str = "POSER_AUTH_COOKIE_NAME";
+pub const ENV_COOKIE_SECRET: &str = "POSER_AUTH_COOKIE_SECRET";
 
-const ENV_GOOGLE_CLIENT_ID: &str = "POSER_AUTH_GOOGLE_CLIENT_ID";
-const ENV_GOOGLE_CLIENT_SECRET: &str = "POSER_AUTH_GOOGLE_CLIENT_SECRET";
-const ENV_GOOGLE_ALLOWED_DOMAINS: &str = "POSER_AUTH_GOOGLE_ALLOWED_DOMAINS";
-const ENV_GOOGLE_AUTH_URL: &str = "POSER_AUTH_GOOGLE_AUTH_URL";
-const ENV_GOOGLE_SERVICE_ACCOUNT: &str = "POSER_AUTH_GOOGLE_SERVICE_ACCOUNT";
-const ENV_GOOGLE_ADMIN_EMAIL: &str = "POSER_AUTH_GOOGLE_ADMIN_EMAIL";
+pub const ENV_GOOGLE_CLIENT_ID: &str = "POSER_AUTH_GOOGLE_CLIENT_ID";
+pub const ENV_GOOGLE_CLIENT_SECRET: &str = "POSER_AUTH_GOOGLE_CLIENT_SECRET";
+pub const ENV_GOOGLE_ALLOWED_DOMAINS: &str = "POSER_AUTH_GOOGLE_ALLOWED_DOMAINS";
+pub const ENV_GOOGLE_AUTH_URL: &str = "POSER_AUTH_GOOGLE_AUTH_URL";
+pub const ENV_GOOGLE_SERVICE_ACCOUNT: &str = "POSER_AUTH_GOOGLE_SERVICE_ACCOUNT";
+pub const ENV_GOOGLE_ADMIN_EMAIL: &str = "POSER_AUTH_GOOGLE_ADMIN_EMAIL";
 
 // Default values for some config options
-const DEFAULT_LISTEN_ADDR: &str = "127.0.0.1:8080";
+pub const DEFAULT_LISTEN_ADDR: &str = "127.0.0.1:8080";
 
-const DEFAULT_COOKIE_NAME: &str = "_poser_auth";
+pub const DEFAULT_COOKIE_NAME: &str = "_poser_auth";
 
-const DEFAULT_GOOGLE_AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
-const DEFAULT_GOOGLE_SERVICE_ACCOUNT: &str = "/data/service_account.json";
+pub const DEFAULT_GOOGLE_AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
+pub const DEFAULT_GOOGLE_SERVICE_ACCOUNT: &str = "/data/service_account.json";
 
+/// The main application config.
 #[derive(Clone, Debug)]
 pub struct Config {
     pub addr: SocketAddr,
@@ -55,12 +59,14 @@ pub struct Config {
     pub google: GoogleConfig,
 }
 
+/// Settings related to handling cookies.
 #[derive(Clone, Debug)]
 pub struct CookieConfig {
     pub name: String,
     pub secret: SymmetricKey<V4>,
 }
 
+/// Settings related to authenticating with Google.
 #[derive(Clone, Debug)]
 pub struct GoogleConfig {
     pub client_id: String,
@@ -72,81 +78,75 @@ pub struct GoogleConfig {
 }
 
 impl Config {
+    /// Try to generate a new Config with environment variables.
     pub fn try_env() -> Result<Self, ConfigError> {
-        parse_config()
+        let addr = get_env_default(ENV_LISTEN_ADDR, DEFAULT_LISTEN_ADDR)?
+            .parse()
+            .map_err(|_| {
+                error!("could not parse socket address");
+                ConfigError::InvalidAddr
+            })?;
+
+        let cookie = {
+            let name = get_env_default(ENV_COOKIE_NAME, DEFAULT_COOKIE_NAME)?;
+
+            let secret_encoded = get_env(ENV_COOKIE_SECRET)?.ok_or_else(|| {
+                error!("expected cookie secret");
+                ConfigError::MissingCookieSecret
+            })?;
+            let secret_decoded = Base64::decode_vec(&secret_encoded).map_err(|_| {
+                error!("failed to decode cookie secret as base64");
+                ConfigError::InvalidBase64
+            })?;
+            let secret = SymmetricKey::<V4>::from(&secret_decoded).map_err(|_| {
+                error!("failed to interprete cookie secret as encryption key");
+                ConfigError::InvalidSymmetricKey
+            })?;
+
+            CookieConfig { name, secret }
+        };
+
+        let google = {
+            let client_id = get_env(ENV_GOOGLE_CLIENT_ID)?.ok_or_else(|| {
+                error!("expected Google client id");
+                ConfigError::MissingClientId
+            })?;
+
+            let client_secret = get_env(ENV_GOOGLE_CLIENT_SECRET)?.ok_or_else(|| {
+                error!("expected Google client secret");
+                ConfigError::MissingClientSecret
+            })?;
+
+            let allowed_domains = get_env(ENV_GOOGLE_ALLOWED_DOMAINS)?.map_or(Vec::new(), |d| {
+                d.split(',').map(str::to_string).collect::<Vec<String>>()
+            });
+
+            let auth_url = get_env_default(ENV_GOOGLE_AUTH_URL, DEFAULT_GOOGLE_AUTH_URL)?;
+
+            let service_account_file =
+                get_env_default(ENV_GOOGLE_SERVICE_ACCOUNT, DEFAULT_GOOGLE_SERVICE_ACCOUNT)?.into();
+
+            let admin_email = get_env(ENV_GOOGLE_ADMIN_EMAIL)?.ok_or_else(|| {
+                error!("expected Google admin email");
+                ConfigError::MissingAdminEmail
+            })?;
+
+            GoogleConfig {
+                client_id,
+                client_secret,
+                allowed_domains,
+                auth_url,
+                service_account_file,
+                admin_email,
+            }
+        };
+
+        Ok(Config {
+            addr,
+            cookie,
+            google,
+        })
     }
-}
-
-pub fn parse_config() -> Result<Config, ConfigError> {
-    let addr = get_env(ENV_LISTEN_ADDR)?
-        .unwrap_or_else(|| DEFAULT_LISTEN_ADDR.to_string())
-        .parse()
-        .map_err(|_| {
-            error!("could not parse socket address");
-            ConfigError::InvalidAddr
-        })?;
-
-    let cookie = {
-        let name = get_env(ENV_COOKIE_NAME)?.unwrap_or_else(|| DEFAULT_COOKIE_NAME.to_string());
-
-        let secret_encoded = get_env(ENV_COOKIE_SECRET)?.ok_or_else(|| {
-            error!("expected cookie secret");
-            ConfigError::MissingCookieSecret
-        })?;
-        let secret_decoded = Base64::decode_vec(&secret_encoded).map_err(|_| {
-            error!("failed to decode cookie secret as base64");
-            ConfigError::InvalidBase64
-        })?;
-        let secret = SymmetricKey::<V4>::from(&secret_decoded).map_err(|_| {
-            error!("failed to interprete cookie secret as encryption key");
-            ConfigError::InvalidSymmetricKey
-        })?;
-
-        CookieConfig { name, secret }
-    };
-
-    let google = {
-        let client_id = get_env(ENV_GOOGLE_CLIENT_ID)?.ok_or_else(|| {
-            error!("expected Google client id");
-            ConfigError::MissingClientId
-        })?;
-
-        let client_secret = get_env(ENV_GOOGLE_CLIENT_SECRET)?.ok_or_else(|| {
-            error!("expected Google client secret");
-            ConfigError::MissingClientSecret
-        })?;
-
-        let allowed_domains = get_env(ENV_GOOGLE_ALLOWED_DOMAINS)?.map_or(Vec::new(), |d| {
-            d.split(',').map(str::to_string).collect::<Vec<String>>()
-        });
-
-        let auth_url =
-            get_env(ENV_GOOGLE_AUTH_URL)?.unwrap_or_else(|| DEFAULT_GOOGLE_AUTH_URL.to_string());
-
-        let service_account_file = get_env(ENV_GOOGLE_SERVICE_ACCOUNT)?
-            .unwrap_or_else(|| DEFAULT_GOOGLE_SERVICE_ACCOUNT.to_string())
-            .into();
-
-        let admin_email = get_env(ENV_GOOGLE_ADMIN_EMAIL)?.ok_or_else(|| {
-            error!("expected Google admin email");
-            ConfigError::MissingAdminEmail
-        })?;
-
-        GoogleConfig {
-            client_id,
-            client_secret,
-            allowed_domains,
-            auth_url,
-            service_account_file,
-            admin_email,
-        }
-    };
-
-    Ok(Config {
-        addr,
-        cookie,
-        google,
-    })
 }
 
 fn get_env(key: &str) -> Result<Option<String>, ConfigError> {
@@ -158,4 +158,8 @@ fn get_env(key: &str) -> Result<Option<String>, ConfigError> {
             Err(ConfigError::InvalidEnvVar)
         }
     }
+}
+
+fn get_env_default(key: &str, default: &str) -> Result<String, ConfigError> {
+    Ok(get_env(key)?.unwrap_or_else(|| default.to_string()))
 }

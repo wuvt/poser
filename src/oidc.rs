@@ -1,3 +1,5 @@
+//! Helper functions for performing the OIDC flow.
+
 use anyhow::{anyhow, Result};
 use pasetors::{
     claims::{Claims, ClaimsValidationRules},
