@@ -525,6 +525,7 @@ dependencies = [
  "axum",
  "base64ct",
  "pasetors",
+ "regex",
  "serde",
  "serde_json",
  "thiserror",
