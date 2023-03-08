@@ -36,6 +36,7 @@ pub enum ConfigError {
 
 // Environment variables for each config option
 pub const ENV_LISTEN_ADDR: &str = "POSER_AUTH_LISTEN_ADDR";
+pub const ENV_DATABASE_URI: &str = "POSER_AUTH_DATABASE_URI";
 pub const ENV_SHUTDOWN_GRACE_PERIOD: &str = "POSER_AUTH_SHUTDOWN_GRACE_PERIOD";
 
 pub const ENV_COOKIE_NAME: &str = "POSER_AUTH_COOKIE_NAME";
@@ -50,6 +51,7 @@ pub const ENV_GOOGLE_ADMIN_EMAIL: &str = "POSER_AUTH_GOOGLE_ADMIN_EMAIL";
 
 // Default values for some config options
 pub const DEFAULT_LISTEN_ADDR: &str = "127.0.0.1:8080";
+pub const DEFAULT_DATABASE_URI: &str = "postgresql://poser@localhost/poser";
 pub const DEFAULT_SHUTDOWN_GRACE_PERIOD: &str = "60s";
 
 pub const DEFAULT_COOKIE_NAME: &str = "_poser_auth";
@@ -61,6 +63,7 @@ pub const DEFAULT_GOOGLE_SERVICE_ACCOUNT: &str = "/data/service_account.json";
 #[derive(Clone, Debug)]
 pub struct Config {
     pub addr: SocketAddr,
+    pub database: String,
     pub cookie: CookieConfig,
     pub google: GoogleConfig,
     pub grace_period: Duration,
@@ -91,6 +94,8 @@ impl Config {
 
         let addr_raw = get_env_default(ENV_LISTEN_ADDR, DEFAULT_LISTEN_ADDR)?;
         let addr = parse_socket_addr(addr_raw)?;
+
+        let database = get_env_default(ENV_DATABASE_URI, DEFAULT_DATABASE_URI)?;
 
         let cookie = {
             let name = get_env_default(ENV_COOKIE_NAME, DEFAULT_COOKIE_NAME)?;
@@ -145,6 +150,7 @@ impl Config {
 
         Ok(Config {
             addr,
+            database,
             cookie,
             google,
             grace_period,

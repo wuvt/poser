@@ -18,6 +18,7 @@ pub mod oidc;
 pub mod routes;
 
 use std::env::var;
+use std::sync::Arc;
 
 use config::Config;
 use routes::routes;
@@ -30,6 +31,7 @@ use tokio::{
     sync::{broadcast, mpsc},
     time::timeout,
 };
+use tokio_postgres::{Client, NoTls};
 use tower::ServiceBuilder;
 use tower_cookies::CookieManagerLayer;
 use tower_http::{
@@ -41,6 +43,7 @@ use tracing::{debug, error, info, warn, Level};
 #[derive(Debug, Clone)]
 pub struct ServerState {
     pub config: Config,
+    pub db: Arc<Client>,
 
     // Signals back to the main thread when dropped
     _shutdown_complete: mpsc::Sender<()>,
@@ -54,14 +57,25 @@ fn main() {
     let config = Config::try_env().expect("invalid configuration");
 
     build_runtime().block_on(async move {
-        let (shutdown_notify, _): (broadcast::Sender<()>, broadcast::Receiver<()>) =
-            broadcast::channel(1);
+        let (shutdown_notify, _) = broadcast::channel(1);
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
+
+        let (client, conn) = tokio_postgres::connect(&config.database, NoTls)
+            .await
+            .expect("connect to the database");
 
         let state = ServerState {
             config: config.clone(),
+            db: Arc::new(client),
             _shutdown_complete: shutdown_tx.clone(),
         };
+
+        let db_signal = shutdown_tx.clone();
+        let conn = tokio::spawn(async move {
+            let res = conn.await;
+            drop(db_signal);
+            res
+        });
 
         let app = routes().with_state(state).layer(
             ServiceBuilder::new()
@@ -86,13 +100,20 @@ fn main() {
         select! {
             _ = unix_signal(SignalKind::interrupt()) => {
                 info!("received SIGINT, shutting down");
-            }
+            },
             _ = unix_signal(SignalKind::terminate()) => {
                 info!("received SIGTERM, shutting down");
-            }
-            Err(e) = tokio::spawn(server) => {
-                error!("server unexpectedly stopped: {}", e);
-            }
+            },
+            res = conn => match res {
+                Ok(Ok(_)) => error!("database connection closed unexpectedly"),
+                Ok(Err(e)) => error!("database connection error: {}", e),
+                Err(e) => error!("database executor unexpectedly stopped: {}", e),
+            },
+            res = tokio::spawn(server) => match res {
+                Ok(Ok(_)) => info!("server shutting down"),
+                Ok(Err(e)) => error!("server unexpectedly stopped: {}", e),
+                Err(e) => error!("server executor unexpectedly stopped: {}", e),
+            },
         }
         drop(shutdown_notify);
         drop(shutdown_tx);
