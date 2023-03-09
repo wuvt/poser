@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use base64ct::{Base64, Encoding};
+use ct_codecs::{Base64, Decoder};
 use ed25519_compact::SecretKey;
 use pasetors::keys::AsymmetricSecretKey;
 use pasetors::{keys::SymmetricKey, version4::V4};
@@ -202,7 +202,7 @@ fn parse_socket_addr(str: String) -> Result<SocketAddr, ConfigError> {
 }
 
 fn parse_secret_key(str: String) -> Result<SymmetricKey<V4>, ConfigError> {
-    let decoded = Base64::decode_vec(&str).map_err(|_| {
+    let decoded = Base64::decode_to_vec(str, None).map_err(|_| {
         error!("failed to decode cookie secret as base64");
         ConfigError::InvalidBase64
     })?;
