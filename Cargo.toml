@@ -8,6 +8,7 @@ anyhow = "1.0"
 axum = { version = "0.6", features = ["macros"] }
 ct-codecs = "1.1"
 ed25519-compact = "2.0"
+openidconnect = "2.5"
 pasetors = "0.6"
 regex = "1.7"
 serde = { version = "1.0", features = ["derive"] }

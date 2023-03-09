@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use ct_codecs::{Base64, Decoder};
 use ed25519_compact::SecretKey;
+use openidconnect::{url::Url, ClientId, ClientSecret};
 use pasetors::keys::AsymmetricSecretKey;
 use pasetors::{keys::SymmetricKey, version4::V4};
 use regex::Regex;
@@ -20,8 +21,12 @@ pub enum ConfigError {
     InvalidEnvVar,
     #[error("invalid socket address")]
     InvalidAddr,
+    #[error("invalid URL")]
+    InvalidUrl,
     #[error("invalid secret key")]
     InvalidSecretKey,
+    #[error("invalid boolean value")]
+    InvalidBool,
     #[error("invalid base64")]
     InvalidBase64,
     #[error("invalid symmetric key")]
@@ -42,6 +47,7 @@ pub enum ConfigError {
 
 // Environment variables for each config option
 pub const ENV_LISTEN_ADDR: &str = "POSER_AUTH_LISTEN_ADDR";
+pub const ENV_SITE_URL: &str = "POSER_AUTH_SITE_URL";
 pub const ENV_DATABASE_URI: &str = "POSER_AUTH_DATABASE_URI";
 pub const ENV_SHUTDOWN_GRACE_PERIOD: &str = "POSER_AUTH_SHUTDOWN_GRACE_PERIOD";
 
@@ -50,22 +56,24 @@ pub const ENV_SECRET_KEY: &str = "POSER_AUTH_SECRET_KEY";
 
 pub const ENV_COOKIE_NAME: &str = "POSER_AUTH_COOKIE_NAME";
 pub const ENV_COOKIE_SECRET: &str = "POSER_AUTH_COOKIE_SECRET";
+pub const ENV_COOKIE_SECURE: &str = "POSER_AUTH_COOKIE_SECURE";
 
 pub const ENV_GOOGLE_CLIENT_ID: &str = "POSER_AUTH_GOOGLE_CLIENT_ID";
 pub const ENV_GOOGLE_CLIENT_SECRET: &str = "POSER_AUTH_GOOGLE_CLIENT_SECRET";
 pub const ENV_GOOGLE_ALLOWED_DOMAINS: &str = "POSER_AUTH_GOOGLE_ALLOWED_DOMAINS";
-pub const ENV_GOOGLE_AUTH_URL: &str = "POSER_AUTH_GOOGLE_AUTH_URL";
+pub const ENV_GOOGLE_EMAIL_DOMAIN: &str = "POSER_AUTH_GOOGLE_EMAIL_DOMAIN";
 pub const ENV_GOOGLE_SERVICE_ACCOUNT: &str = "POSER_AUTH_GOOGLE_SERVICE_ACCOUNT";
 pub const ENV_GOOGLE_ADMIN_EMAIL: &str = "POSER_AUTH_GOOGLE_ADMIN_EMAIL";
 
 // Default values for some config options
 pub const DEFAULT_LISTEN_ADDR: &str = "127.0.0.1:8080";
+pub const DEFAULT_SITE_URL: &str = "http://localhost:8080";
 pub const DEFAULT_DATABASE_URI: &str = "postgresql://poser@localhost/poser";
 pub const DEFAULT_SHUTDOWN_GRACE_PERIOD: &str = "60s";
 
 pub const DEFAULT_COOKIE_NAME: &str = "_poser_auth";
+pub const DEFAULT_COOKIE_SECURE: &str = "true";
 
-pub const DEFAULT_GOOGLE_AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 pub const DEFAULT_GOOGLE_SERVICE_ACCOUNT: &str = "/data/service_account.json";
 
 /// The main application config.
@@ -73,6 +81,7 @@ pub const DEFAULT_GOOGLE_SERVICE_ACCOUNT: &str = "/data/service_account.json";
 pub struct Config {
     pub addr: SocketAddr,
     pub database: String,
+    pub site_url: Url,
     pub key: AsymmetricSecretKey<V4>,
     pub cookie: CookieConfig,
     pub google: GoogleConfig,
@@ -84,15 +93,16 @@ pub struct Config {
 pub struct CookieConfig {
     pub name: String,
     pub secret: SymmetricKey<V4>,
+    pub secure: bool,
 }
 
 /// Settings related to authenticating with Google.
 #[derive(Clone, Debug)]
 pub struct GoogleConfig {
-    pub client_id: String,
-    pub client_secret: String,
+    pub client_id: ClientId,
+    pub client_secret: ClientSecret,
     pub allowed_domains: Vec<String>,
-    pub auth_url: String,
+    pub email_domain: Option<String>,
     pub service_account_file: PathBuf,
     pub admin_email: String,
 }
@@ -107,6 +117,9 @@ impl Config {
 
         let database = get_env_default(ENV_DATABASE_URI, DEFAULT_DATABASE_URI)?;
 
+        let site_url_raw = get_env_default(ENV_SITE_URL, DEFAULT_SITE_URL)?;
+        let site_url = parse_url(site_url_raw)?;
+
         let key_raw = get_env(ENV_SECRET_KEY)?.ok_or_else(|| {
             error!("expected private key");
             ConfigError::MissingSecretKey
@@ -115,7 +128,6 @@ impl Config {
             error!("failed to parse private key: {}", e);
             ConfigError::InvalidSecretKey
         })?;
-        let key = AsymmetricSecretKey::<V4>::from(&*key).unwrap();
 
         let cookie = {
             let name = get_env_default(ENV_COOKIE_NAME, DEFAULT_COOKIE_NAME)?;
@@ -126,7 +138,14 @@ impl Config {
             })?;
             let secret = parse_secret_key(secret_raw)?;
 
-            CookieConfig { name, secret }
+            let secure_raw = get_env_default(ENV_COOKIE_SECURE, DEFAULT_COOKIE_SECURE)?;
+            let secure = parse_bool(secure_raw)?;
+
+            CookieConfig {
+                name,
+                secret,
+                secure,
+            }
         };
 
         let google = {
@@ -144,7 +163,7 @@ impl Config {
                 d.split(',').map(str::to_string).collect::<Vec<String>>()
             });
 
-            let auth_url = get_env_default(ENV_GOOGLE_AUTH_URL, DEFAULT_GOOGLE_AUTH_URL)?;
+            let email_domain = get_env(ENV_GOOGLE_EMAIL_DOMAIN)?;
 
             let service_account_file =
                 get_env_default(ENV_GOOGLE_SERVICE_ACCOUNT, DEFAULT_GOOGLE_SERVICE_ACCOUNT)?.into();
@@ -155,10 +174,10 @@ impl Config {
             })?;
 
             GoogleConfig {
-                client_id,
-                client_secret,
+                client_id: ClientId::new(client_id),
+                client_secret: ClientSecret::new(client_secret),
                 allowed_domains,
-                auth_url,
+                email_domain,
                 service_account_file,
                 admin_email,
             }
@@ -171,7 +190,8 @@ impl Config {
         Ok(Config {
             addr,
             database,
-            key,
+            site_url,
+            key: AsymmetricSecretKey::<V4>::from(&*key).unwrap(),
             cookie,
             google,
             grace_period,
@@ -201,6 +221,13 @@ fn parse_socket_addr(str: String) -> Result<SocketAddr, ConfigError> {
     })
 }
 
+fn parse_url(str: String) -> Result<Url, ConfigError> {
+    str.parse().map_err(|_| {
+        error!("could not parse url");
+        ConfigError::InvalidUrl
+    })
+}
+
 fn parse_secret_key(str: String) -> Result<SymmetricKey<V4>, ConfigError> {
     let decoded = Base64::decode_to_vec(str, None).map_err(|_| {
         error!("failed to decode cookie secret as base64");
@@ -210,6 +237,13 @@ fn parse_secret_key(str: String) -> Result<SymmetricKey<V4>, ConfigError> {
     SymmetricKey::<V4>::from(&decoded).map_err(|_| {
         error!("failed to interprete cookie secret as encryption key");
         ConfigError::InvalidSymmetricKey
+    })
+}
+
+fn parse_bool(str: String) -> Result<bool, ConfigError> {
+    str.parse().map_err(|_| {
+        error!("could not parse boolean");
+        ConfigError::InvalidBool
     })
 }
 

@@ -2,16 +2,30 @@
 
 use std::collections::HashMap;
 
-use crate::error::HttpError;
 use crate::oidc::OidcState;
 use crate::ServerState;
 
 use axum::{
     extract::{Query, State},
-    response::Redirect,
+    http::StatusCode,
+    response::{IntoResponse, Json, Redirect, Response},
 };
+use openidconnect::{core::CoreResponseType, AuthenticationFlow, CsrfToken, Scope};
+use serde_json::json;
+use thiserror::Error;
 use tower_cookies::{Cookie, Cookies};
 use tracing::error;
+
+/// Errors returned by the handler.
+#[derive(Error, Clone, Debug)]
+pub enum Error {
+    #[error("invalid session token")]
+    InvalidSessionToken,
+    #[error("error generating OIDC state")]
+    StateError,
+    #[error("error generating OIDC cookie")]
+    CookieError,
+}
 
 /// A handler to start the OIDC flow.
 #[axum::debug_handler(state = ServerState)]
@@ -19,30 +33,61 @@ pub async fn login_handler(
     State(state): State<ServerState>,
     cookies: Cookies,
     Query(params): Query<HashMap<String, String>>,
-) -> Result<Redirect, HttpError> {
+) -> Result<Redirect, Error> {
     let redirect = params.get("redirect").map(|s| s.as_str()).unwrap_or("/");
-    let oidc = OidcState::new_request(redirect);
+
+    let oidc_state = OidcState::new_request(redirect);
+    let csrf = oidc_state
+        .to_state(&state.config.cookie.secret)
+        .map_err(|e| {
+            error!("error generating OIDC state: {}", e);
+            Error::StateError
+        })?;
+    let nonce = oidc_state.get_nonce().clone();
+
+    let mut auth = state
+        .oidc
+        .authorize_url(
+            AuthenticationFlow::<CoreResponseType>::AuthorizationCode,
+            || CsrfToken::new(csrf),
+            || nonce,
+        )
+        .add_scope(Scope::new("email".to_string()))
+        .add_scope(Scope::new("profile".to_string()));
+
+    if let Some(hd) = state.config.google.email_domain {
+        auth = auth.add_extra_param("hd", hd);
+    }
+
+    let (authorize_url, _, _) = auth.url();
 
     cookies.add(
         Cookie::build(
             format!("{}_csrf", state.config.cookie.name),
-            oidc.to_state_cookie(&state.config.cookie.secret)
+            oidc_state
+                .to_cookie(&state.config.cookie.secret)
                 .map_err(|e| {
-                    error!("Failed to generate OIDC cookie: {}", e);
-                    HttpError::Internal("Failed to generate login request")
+                    error!("error generating OIDC cookie: {}", e);
+                    Error::CookieError
                 })?,
         )
-        .secure(true)
+        .secure(state.config.cookie.secure)
         .http_only(true)
         .finish(),
     );
 
-    let state_token = oidc
-        .to_state_token(&state.config.cookie.secret)
-        .map_err(|e| {
-            error!("Failed to generate OIDC state: {}", e);
-            HttpError::Internal("Failed to generate login request")
-        })?;
+    Ok(Redirect::to(authorize_url.as_str()))
+}
 
-    Ok(Redirect::to(&format!("/callback?state={}", state_token)))
+impl IntoResponse for Error {
+    fn into_response(self) -> Response {
+        let response = match self {
+            Error::InvalidSessionToken => {
+                json!({ "error": "invalid request" })
+            }
+            Error::StateError | Error::CookieError => json!({ "error": "internal error" }),
+        };
+
+        (StatusCode::BAD_REQUEST, Json(response)).into_response()
+    }
 }

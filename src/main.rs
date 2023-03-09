@@ -22,6 +22,8 @@ use std::env::var;
 use std::sync::Arc;
 
 use config::Config;
+use oidc::setup_auth;
+use openidconnect::core::CoreClient;
 use routes::routes;
 
 use axum::Server;
@@ -45,6 +47,7 @@ use tracing::{debug, error, info, warn, Level};
 pub struct ServerState {
     pub config: Config,
     pub db: Arc<Client>,
+    pub oidc: CoreClient,
 
     // Signals back to the main thread when dropped
     _shutdown_complete: mpsc::Sender<()>,
@@ -61,13 +64,18 @@ fn main() {
         let (shutdown_notify, _) = broadcast::channel(1);
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
 
-        let (client, conn) = tokio_postgres::connect(&config.database, NoTls)
+        let (db, conn) = tokio_postgres::connect(&config.database, NoTls)
             .await
             .expect("connect to the database");
 
+        let oidc = setup_auth(&config)
+            .await
+            .expect("setup Google authentication");
+
         let state = ServerState {
             config: config.clone(),
-            db: Arc::new(client),
+            db: Arc::new(db),
+            oidc,
             _shutdown_complete: shutdown_tx.clone(),
         };
 
