@@ -16,6 +16,7 @@ pub mod config;
 pub mod error;
 pub mod oidc;
 pub mod routes;
+pub mod token;
 
 use std::env::var;
 use std::sync::Arc;

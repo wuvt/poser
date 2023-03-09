@@ -1,23 +1,23 @@
 //! HTTP routes for interacting with poser.
 
-pub mod auth;
 pub mod callback;
 pub mod login;
+pub mod token;
 
 use crate::ServerState;
-use auth::auth_handler;
 use callback::callback_handler;
 use login::login_handler;
+use token::token_handler;
 
 use axum::{
     http::StatusCode,
-    routing::{get, Router},
+    routing::{get, post, Router},
 };
 
 /// The complete router for this application.
 pub fn routes() -> Router<ServerState> {
     Router::new()
-        .route("/auth", get(auth_handler))
+        .route("/token", post(token_handler))
         .route("/callback", get(callback_handler))
         .route("/login", get(login_handler))
         .route("/ping", get(ping_handler))

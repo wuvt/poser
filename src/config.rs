@@ -6,6 +6,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use base64ct::{Base64, Encoding};
+use ed25519_compact::SecretKey;
+use pasetors::keys::AsymmetricSecretKey;
 use pasetors::{keys::SymmetricKey, version4::V4};
 use regex::Regex;
 use thiserror::Error;
@@ -18,12 +20,16 @@ pub enum ConfigError {
     InvalidEnvVar,
     #[error("invalid socket address")]
     InvalidAddr,
+    #[error("invalid secret key")]
+    InvalidSecretKey,
     #[error("invalid base64")]
     InvalidBase64,
     #[error("invalid symmetric key")]
     InvalidSymmetricKey,
     #[error("invalid duration")]
     InvalidDuration,
+    #[error("missing secret key")]
+    MissingSecretKey,
     #[error("missing cookie secret")]
     MissingCookieSecret,
     #[error("missing Google client id")]
@@ -38,6 +44,9 @@ pub enum ConfigError {
 pub const ENV_LISTEN_ADDR: &str = "POSER_AUTH_LISTEN_ADDR";
 pub const ENV_DATABASE_URI: &str = "POSER_AUTH_DATABASE_URI";
 pub const ENV_SHUTDOWN_GRACE_PERIOD: &str = "POSER_AUTH_SHUTDOWN_GRACE_PERIOD";
+
+/// An OpenSSL-compatible, PEM encoded ed25519 private key.
+pub const ENV_SECRET_KEY: &str = "POSER_AUTH_SECRET_KEY";
 
 pub const ENV_COOKIE_NAME: &str = "POSER_AUTH_COOKIE_NAME";
 pub const ENV_COOKIE_SECRET: &str = "POSER_AUTH_COOKIE_SECRET";
@@ -64,6 +73,7 @@ pub const DEFAULT_GOOGLE_SERVICE_ACCOUNT: &str = "/data/service_account.json";
 pub struct Config {
     pub addr: SocketAddr,
     pub database: String,
+    pub key: AsymmetricSecretKey<V4>,
     pub cookie: CookieConfig,
     pub google: GoogleConfig,
     pub grace_period: Duration,
@@ -96,6 +106,16 @@ impl Config {
         let addr = parse_socket_addr(addr_raw)?;
 
         let database = get_env_default(ENV_DATABASE_URI, DEFAULT_DATABASE_URI)?;
+
+        let key_raw = get_env(ENV_SECRET_KEY)?.ok_or_else(|| {
+            error!("expected private key");
+            ConfigError::MissingSecretKey
+        })?;
+        let key = SecretKey::from_pem(&key_raw).map_err(|e| {
+            error!("failed to parse private key: {}", e);
+            ConfigError::InvalidSecretKey
+        })?;
+        let key = AsymmetricSecretKey::<V4>::from(&*key).unwrap();
 
         let cookie = {
             let name = get_env_default(ENV_COOKIE_NAME, DEFAULT_COOKIE_NAME)?;
@@ -151,6 +171,7 @@ impl Config {
         Ok(Config {
             addr,
             database,
+            key,
             cookie,
             google,
             grace_period,
