@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use crate::token::{self, UserToken};
+use crate::token::UserToken;
 use crate::ServerState;
 
 use axum::{
@@ -18,9 +18,9 @@ use tokio_postgres::Client;
 use tracing::error;
 use uuid::Uuid;
 
-/// Errors returned by a the handler.
+/// Errors returned by the handler.
 #[derive(Error, Clone, Debug)]
-pub enum TokenError {
+pub enum Error {
     #[error("invalid session token")]
     InvalidSessionToken,
     #[error("invalid session")]
@@ -28,7 +28,7 @@ pub enum TokenError {
     #[error("missing session token")]
     MissingSessionToken,
     #[error("error generating id token")]
-    PasetoError(#[from] token::TokenError),
+    TokenError,
 }
 
 /// A handler to generate a short-lived id token from a user's session token.
@@ -41,15 +41,15 @@ pub enum TokenError {
 pub async fn token_handler(
     State(state): State<ServerState>,
     Form(params): Form<HashMap<String, String>>,
-) -> Result<Response, TokenError> {
+) -> Result<Response, Error> {
     let session_token = params.get("code").ok_or_else(|| {
         error!("missing session token parameter");
-        TokenError::MissingSessionToken
+        Error::MissingSessionToken
     })?;
 
     let session_id = Uuid::try_parse(session_token).map_err(|_| {
         error!("failed to parse session token as uuid");
-        TokenError::InvalidSessionToken
+        Error::InvalidSessionToken
     })?;
 
     let token = build_token(&session_id, &state.db, &state.config.key).await?;
@@ -61,19 +61,19 @@ async fn build_token(
     session_id: &Uuid,
     db: &Client,
     key: &AsymmetricSecretKey<V4>,
-) -> Result<String, TokenError> {
+) -> Result<String, Error> {
     let session = db
         .query_one("SELECT * from session WHERE id = $1::UUID", &[&session_id])
         .await
         .map_err(|e| {
             error!("database error: {}", e);
-            TokenError::InvalidSession
+            Error::InvalidSession
         })?;
 
     let expiration: OffsetDateTime = session.get("expire");
     if expiration < OffsetDateTime::now_utc() {
         error!("session is expired");
-        return Err(TokenError::InvalidSession);
+        return Err(Error::InvalidSession);
     }
 
     let token = UserToken {
@@ -85,18 +85,18 @@ async fn build_token(
 
     token.sign(key).map_err(|e| {
         error!("error generating token: {}", e);
-        TokenError::PasetoError(e)
+        Error::TokenError
     })
 }
 
-impl IntoResponse for TokenError {
+impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let response = match self {
-            TokenError::InvalidSessionToken | TokenError::MissingSessionToken => {
+            Error::InvalidSessionToken | Error::MissingSessionToken => {
                 json!({ "error": "invalid request" })
             }
-            TokenError::InvalidSession => json!({ "error": "bad session" }),
-            TokenError::PasetoError(_) => json!({ "error": "internal error" }),
+            Error::InvalidSession => json!({ "error": "bad session" }),
+            Error::TokenError => json!({ "error": "internal error" }),
         };
 
         (StatusCode::BAD_REQUEST, Json(response)).into_response()

@@ -16,7 +16,7 @@ use tracing::{error, trace};
 
 /// An error that occurs while generating the server configuration.
 #[derive(Error, Clone, Debug)]
-pub enum ConfigError {
+pub enum Error {
     #[error("invalid environment variable")]
     InvalidEnvVar,
     #[error("invalid socket address")]
@@ -109,7 +109,7 @@ pub struct GoogleConfig {
 
 impl Config {
     /// Try to generate a new Config with environment variables.
-    pub fn try_env() -> Result<Self, ConfigError> {
+    pub fn try_env() -> Result<Self, Error> {
         trace!("parsing config from environment variables");
 
         let addr_raw = get_env_default(ENV_LISTEN_ADDR, DEFAULT_LISTEN_ADDR)?;
@@ -122,11 +122,11 @@ impl Config {
 
         let key_raw = get_env(ENV_SECRET_KEY)?.ok_or_else(|| {
             error!("expected private key");
-            ConfigError::MissingSecretKey
+            Error::MissingSecretKey
         })?;
         let key = SecretKey::from_pem(&key_raw).map_err(|e| {
             error!("failed to parse private key: {}", e);
-            ConfigError::InvalidSecretKey
+            Error::InvalidSecretKey
         })?;
 
         let cookie = {
@@ -134,7 +134,7 @@ impl Config {
 
             let secret_raw = get_env(ENV_COOKIE_SECRET)?.ok_or_else(|| {
                 error!("expected cookie secret");
-                ConfigError::MissingCookieSecret
+                Error::MissingCookieSecret
             })?;
             let secret = parse_secret_key(secret_raw)?;
 
@@ -151,12 +151,12 @@ impl Config {
         let google = {
             let client_id = get_env(ENV_GOOGLE_CLIENT_ID)?.ok_or_else(|| {
                 error!("expected Google client id");
-                ConfigError::MissingClientId
+                Error::MissingClientId
             })?;
 
             let client_secret = get_env(ENV_GOOGLE_CLIENT_SECRET)?.ok_or_else(|| {
                 error!("expected Google client secret");
-                ConfigError::MissingClientSecret
+                Error::MissingClientSecret
             })?;
 
             let allowed_domains = get_env(ENV_GOOGLE_ALLOWED_DOMAINS)?.map_or(Vec::new(), |d| {
@@ -170,7 +170,7 @@ impl Config {
 
             let admin_email = get_env(ENV_GOOGLE_ADMIN_EMAIL)?.ok_or_else(|| {
                 error!("expected Google admin email");
-                ConfigError::MissingAdminEmail
+                Error::MissingAdminEmail
             })?;
 
             GoogleConfig {
@@ -199,64 +199,64 @@ impl Config {
     }
 }
 
-fn get_env(key: &str) -> Result<Option<String>, ConfigError> {
+fn get_env(key: &str) -> Result<Option<String>, Error> {
     match var(key) {
         Ok(value) => Ok(Some(value)),
         Err(VarError::NotPresent) => Ok(None),
         Err(VarError::NotUnicode(_)) => {
             error!("{} is not unicode", key);
-            Err(ConfigError::InvalidEnvVar)
+            Err(Error::InvalidEnvVar)
         }
     }
 }
 
-fn get_env_default(key: &str, default: &str) -> Result<String, ConfigError> {
+fn get_env_default(key: &str, default: &str) -> Result<String, Error> {
     Ok(get_env(key)?.unwrap_or_else(|| default.to_string()))
 }
 
-fn parse_socket_addr(str: String) -> Result<SocketAddr, ConfigError> {
+fn parse_socket_addr(str: String) -> Result<SocketAddr, Error> {
     str.parse().map_err(|_| {
         error!("could not parse socket address");
-        ConfigError::InvalidAddr
+        Error::InvalidAddr
     })
 }
 
-fn parse_url(str: String) -> Result<Url, ConfigError> {
+fn parse_url(str: String) -> Result<Url, Error> {
     str.parse().map_err(|_| {
         error!("could not parse url");
-        ConfigError::InvalidUrl
+        Error::InvalidUrl
     })
 }
 
-fn parse_secret_key(str: String) -> Result<SymmetricKey<V4>, ConfigError> {
+fn parse_secret_key(str: String) -> Result<SymmetricKey<V4>, Error> {
     let decoded = Base64::decode_to_vec(str, None).map_err(|_| {
         error!("failed to decode cookie secret as base64");
-        ConfigError::InvalidBase64
+        Error::InvalidBase64
     })?;
 
     SymmetricKey::<V4>::from(&decoded).map_err(|_| {
         error!("failed to interprete cookie secret as encryption key");
-        ConfigError::InvalidSymmetricKey
+        Error::InvalidSymmetricKey
     })
 }
 
-fn parse_bool(str: String) -> Result<bool, ConfigError> {
+fn parse_bool(str: String) -> Result<bool, Error> {
     str.parse().map_err(|_| {
         error!("could not parse boolean");
-        ConfigError::InvalidBool
+        Error::InvalidBool
     })
 }
 
-fn parse_duration(str: String) -> Result<Duration, ConfigError> {
+fn parse_duration(str: String) -> Result<Duration, Error> {
     let re = Regex::new(r"^\s*(\d+)(ns|us|ms|s)?\s*$").expect("build duration regex");
     let caps = re.captures(&str).ok_or_else(|| {
         error!("unrecognised duration format");
-        ConfigError::InvalidDuration
+        Error::InvalidDuration
     })?;
 
     let value = (caps[1]).parse().map_err(|_| {
         error!("failed to parse number in duration");
-        ConfigError::InvalidDuration
+        Error::InvalidDuration
     })?;
 
     match caps.get(2).map(|m| m.as_str()) {
@@ -267,7 +267,7 @@ fn parse_duration(str: String) -> Result<Duration, ConfigError> {
         None => Ok(Duration::from_secs(value)),
         Some(s) => {
             error!("unrecognised duration suffix: {}", s);
-            Err(ConfigError::InvalidDuration)
+            Err(Error::InvalidDuration)
         }
     }
 }

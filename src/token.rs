@@ -6,7 +6,7 @@ use tracing::error;
 
 /// An error that occurs while processing a user token.
 #[derive(Error, Clone, Debug)]
-pub enum TokenError {
+pub enum Error {
     #[error("generated Paseto would have invalid claims")]
     InvalidClaim,
     #[error("invalid user id")]
@@ -24,15 +24,15 @@ pub struct UserToken {
 }
 
 impl UserToken {
-    pub fn sign(&self, key: &AsymmetricSecretKey<V4>) -> Result<String, TokenError> {
+    pub fn sign(&self, key: &AsymmetricSecretKey<V4>) -> Result<String, Error> {
         let mut claims = Claims::new().map_err(|e| {
             error!("error generating Paseto claims: {}", e);
-            TokenError::InvalidClaim
+            Error::InvalidClaim
         })?;
 
         claims.subject(&self.id).map_err(|_| {
             error!("token user id is empty");
-            TokenError::InvalidId
+            Error::InvalidId
         })?;
 
         // unwrap is safe since Claims::add_additional only returns an error
@@ -43,7 +43,7 @@ impl UserToken {
 
         sign(key, &claims, None, None).map_err(|e| {
             error!("error signing Paseto: {}", e);
-            TokenError::SigningError
+            Error::SigningError
         })
     }
 }

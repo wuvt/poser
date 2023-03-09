@@ -12,7 +12,7 @@ use axum::{
 use tower_cookies::{Cookie, Cookies};
 use tracing::error;
 
-/// A handler for recieving the callback during the OIDC flow.
+/// A handler for receiving the callback during the OIDC flow.
 #[axum::debug_handler(state = ServerState)]
 pub async fn callback_handler(
     State(state): State<ServerState>,
