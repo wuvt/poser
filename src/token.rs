@@ -16,6 +16,7 @@ pub enum Error {
 }
 
 /// A token represented an authenticated user.
+#[derive(Clone, Debug)]
 pub struct UserToken {
     pub id: String,
     pub name: String,

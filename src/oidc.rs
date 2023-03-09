@@ -1,8 +1,7 @@
-//! Helper functions for performing the OIDC flow.
+//! Helpers for performing the OpenID Connect flow.
 
 use crate::config::Config;
 
-use anyhow::{anyhow, Result};
 use openidconnect::{
     core::{
         CoreAuthDisplay, CoreClaimName, CoreClaimType, CoreClient, CoreClientAuthMethod,
@@ -22,12 +21,13 @@ use pasetors::{
     version4::V4,
     Local,
 };
+use ring::constant_time::verify_slices_are_equal;
 use serde::{Deserialize, Serialize};
 use serde_json::from_value;
 use thiserror::Error;
 use tracing::error;
 
-/// Errors while setting up OIDC.
+/// Errors while setting up OpenID Connect.
 #[derive(Error, Clone, Debug)]
 pub enum SetupError {
     #[error("invalid issuer url")]
@@ -36,17 +36,33 @@ pub enum SetupError {
     InvalidRevocation,
     #[error("invalid redirect url")]
     InvalidRedirect,
-    #[error("error during OIDC discovery")]
+    #[error("error during oidc discovery")]
     DiscoveryError,
 }
 
-/// Errors generating values for OIDC.
+/// Errors during the OpenID Connect flow.
 #[derive(Error, Clone, Debug)]
 pub enum Error {
-    #[error("generated Paseto would have invalid claims")]
+    #[error("generated paseto would have invalid claims")]
     InvalidClaim,
-    #[error("failed to encrypt Paseto")]
+    #[error("invalid paseto token")]
+    InvalidToken,
+    #[error("invalid csrf claim")]
+    InvalidCsrf,
+    #[error("invalid redirect claim")]
+    InvalidRedirect,
+    #[error("invalid nonce claim")]
+    InvalidNonce,
+    #[error("missing csrf claim")]
+    MissingCsrf,
+    #[error("missing redirect claim")]
+    MissingRedirect,
+    #[error("missing nonce claim")]
+    MissingNonce,
+    #[error("failed to encrypt paseto")]
     EncryptionError,
+    #[error("csrf tokens don't match")]
+    CsrfMismatch,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -56,6 +72,8 @@ struct RevocationEndpointProviderMetadata {
 
 impl AdditionalProviderMetadata for RevocationEndpointProviderMetadata {}
 
+/// Prepare an authentication client for Google using OpenID Connect
+/// Discovery.
 pub async fn setup_auth(config: &Config) -> Result<CoreClient, SetupError> {
     let issuer_url = IssuerUrl::new("https://accounts.google.com".to_string()).map_err(|e| {
         error!("error setting up issuer url: {}", e);
@@ -116,8 +134,9 @@ pub struct OidcState {
 }
 
 impl OidcState {
+    /// Randomly generate new state parameters for an OpenID Connect flow
+    /// given a redirect URL.
     pub fn new_request(redirect: &str) -> Self {
-        // TODO: Generate random values
         Self {
             csrf: CsrfToken::new_random(),
             nonce: Nonce::new_random(),
@@ -125,55 +144,59 @@ impl OidcState {
         }
     }
 
-    pub fn from_tokens(state: &str, cookie: &str, key: &SymmetricKey<V4>) -> Result<Self> {
-        let rules = ClaimsValidationRules::new();
+    /// Validate if an OpenID Connect authentication request was successful
+    /// given the returned state and browser CSRF cookie.
+    pub fn from_tokens(state: &str, cookie: &str, key: &SymmetricKey<V4>) -> Result<Self, Error> {
+        let state_claims = get_claims(state, key)?;
+        let cookie_claims = get_claims(cookie, key)?;
 
-        let untrusted_state = UntrustedToken::<Local, V4>::try_from(state)?;
-        let state_token = decrypt(key, &untrusted_state, &rules, None, None)?;
-        let untrusted_cookie = UntrustedToken::<Local, V4>::try_from(cookie)?;
-        let cookie_token = decrypt(key, &untrusted_cookie, &rules, None, None)?;
+        let state_csrf = state_claims.get_claim("csrf").ok_or_else(|| {
+            error!("state missing csrf claim");
+            Error::MissingCsrf
+        })?;
+        let redirect = state_claims.get_claim("redirect").ok_or_else(|| {
+            error!("state missing redirect claim");
+            Error::MissingRedirect
+        })?;
+        let cookie_csrf = cookie_claims.get_claim("csrf").ok_or_else(|| {
+            error!("cookie missing csrf claim");
+            Error::MissingCsrf
+        })?;
+        let nonce = cookie_claims.get_claim("nonce").ok_or_else(|| {
+            error!("cookie missing nonce claim");
+            Error::MissingNonce
+        })?;
 
-        let state_claims = state_token
-            .payload_claims()
-            .ok_or_else(|| anyhow!("No claims found in state"))?;
-        let cookie_claims = cookie_token
-            .payload_claims()
-            .ok_or_else(|| anyhow!("No claims found in cookie"))?;
+        let state_csrf: CsrfToken = from_value(state_csrf.clone()).map_err(|e| {
+            error!("unable to parse state csrf token: {}", e);
+            Error::InvalidCsrf
+        })?;
+        let redirect = from_value(redirect.clone()).map_err(|e| {
+            error!("unable to parse state redirect value: {}", e);
+            Error::InvalidRedirect
+        })?;
+        let cookie_csrf: CsrfToken = from_value(cookie_csrf.clone()).map_err(|e| {
+            error!("unable to parse cookie csrf token: {}", e);
+            Error::InvalidCsrf
+        })?;
+        let nonce = from_value(nonce.clone()).map_err(|e| {
+            error!("unable to parse cookie nonce value: {}", e);
+            Error::InvalidNonce
+        })?;
 
-        let state_csrf: CsrfToken = from_value(
-            state_claims
-                .get_claim("csrf")
-                .ok_or_else(|| anyhow!("State missing csrf claim"))?
-                .clone(),
-        )?;
-        let redirect = from_value(
-            state_claims
-                .get_claim("redirect")
-                .ok_or_else(|| anyhow!("State missing redirect claim"))?
-                .clone(),
-        )?;
-        let cookie_csrf: CsrfToken = from_value(
-            cookie_claims
-                .get_claim("csrf")
-                .ok_or_else(|| anyhow!("Cookie missing csrf claim"))?
-                .clone(),
-        )?;
-        let nonce = from_value(
-            cookie_claims
-                .get_claim("nonce")
-                .ok_or_else(|| anyhow!("Cookie missing nonce claim"))?
-                .clone(),
-        )?;
-
-        if state_csrf.secret() == cookie_csrf.secret() {
-            Ok(Self {
-                csrf: state_csrf,
-                nonce,
-                redirect,
-            })
-        } else {
-            Err(anyhow!("CSRF tokens mismatch!"))
-        }
+        verify_slices_are_equal(
+            state_csrf.secret().as_bytes(),
+            cookie_csrf.secret().as_bytes(),
+        )
+        .map_err(|_| {
+            error!("csrf tokens dont match!");
+            Error::CsrfMismatch
+        })
+        .map(|_| Self {
+            csrf: state_csrf,
+            nonce,
+            redirect,
+        })
     }
 
     pub fn get_redirect(&self) -> &str {
@@ -184,7 +207,7 @@ impl OidcState {
         &self.nonce
     }
 
-    /// Generate the state parameter for an authorization request
+    /// Generate the state parameter for an authorization request.
     pub fn to_state(&self, key: &SymmetricKey<V4>) -> Result<String, Error> {
         let mut claims = Claims::new().map_err(|e| {
             error!("error generating Paseto claims: {}", e);
@@ -207,7 +230,7 @@ impl OidcState {
     }
 
     /// Generate a browser cookie for use in verifying the result of an
-    /// authorization request
+    /// authorization request.
     pub fn to_cookie(&self, key: &SymmetricKey<V4>) -> Result<String, Error> {
         let mut claims = Claims::new().map_err(|e| {
             error!("error generating Paseto claims: {}", e);
@@ -228,4 +251,26 @@ impl OidcState {
             Error::EncryptionError
         })
     }
+}
+
+fn get_claims(token: &str, key: &SymmetricKey<V4>) -> Result<Claims, Error> {
+    let rules = ClaimsValidationRules::new();
+
+    let token = UntrustedToken::<Local, V4>::try_from(token).map_err(|e| {
+        error!("error parsing token: {}", e);
+        Error::InvalidToken
+    })?;
+
+    let token = decrypt(key, &token, &rules, None, None).map_err(|e| {
+        error!("error decrypting token: {}", e);
+        Error::InvalidToken
+    })?;
+
+    token
+        .payload_claims()
+        .ok_or_else(|| {
+            error!("no claims found on token");
+            Error::InvalidToken
+        })
+        .map(|c| c.clone())
 }
