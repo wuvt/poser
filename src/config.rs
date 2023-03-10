@@ -5,10 +5,10 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::token::SigningKey;
+
 use ct_codecs::{Base64, Decoder};
-use ed25519_compact::SecretKey;
 use openidconnect::{url::Url, ClientId, ClientSecret};
-use pasetors::keys::AsymmetricSecretKey;
 use pasetors::{keys::SymmetricKey, version4::V4};
 use regex::Regex;
 use thiserror::Error;
@@ -82,7 +82,7 @@ pub struct Config {
     pub addr: SocketAddr,
     pub database: String,
     pub site_url: Url,
-    pub key: AsymmetricSecretKey<V4>,
+    pub key: SigningKey,
     pub cookie: CookieConfig,
     pub google: GoogleConfig,
     pub grace_period: Duration,
@@ -124,8 +124,8 @@ impl Config {
             error!("expected private key");
             Error::MissingSecretKey
         })?;
-        let key = SecretKey::from_pem(&key_raw).map_err(|e| {
-            error!("failed to parse private key: {}", e);
+        let key = SigningKey::from_pem(&key_raw).map_err(|_| {
+            error!("failed to parse private key");
             Error::InvalidSecretKey
         })?;
 
@@ -191,7 +191,7 @@ impl Config {
             addr,
             database,
             site_url,
-            key: AsymmetricSecretKey::<V4>::from(&*key).unwrap(),
+            key,
             cookie,
             google,
             grace_period,

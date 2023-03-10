@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use crate::token::UserToken;
+use crate::token::{SigningKey, UserToken};
 use crate::ServerState;
 
 use axum::{
@@ -10,7 +10,6 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Json, Response},
 };
-use pasetors::{keys::AsymmetricSecretKey, version4::V4};
 use serde_json::json;
 use thiserror::Error;
 use time::OffsetDateTime;
@@ -57,11 +56,7 @@ pub async fn token_handler(
     Ok(Json(json!({ "expires_in": 3600, "id_token": token })).into_response())
 }
 
-async fn build_token(
-    session_id: &Uuid,
-    db: &Client,
-    key: &AsymmetricSecretKey<V4>,
-) -> Result<String, Error> {
+async fn build_token(session_id: &Uuid, db: &Client, key: &SigningKey) -> Result<String, Error> {
     let session = db
         .query_one("SELECT * from session WHERE id = $1::UUID", &[&session_id])
         .await
