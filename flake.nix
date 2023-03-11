@@ -1,6 +1,6 @@
 {
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-22.11";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     crane = {
       url = "github:ipetkov/crane";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -49,13 +49,17 @@
       };
 
       checks."${system}" = {
+        poser-tests = craneLib.cargoTest {
+          inherit src cargoArtifacts;
+        };
+
         poser-clippy = craneLib.cargoClippy {
           inherit src cargoArtifacts;
 
           cargoClippyExtraArgs = "--all-targets -- --deny warnings";
         };
 
-        poserfmt = craneLib.cargoFmt {
+        poser-fmt = craneLib.cargoFmt {
           inherit src;
         };
       };
