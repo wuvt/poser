@@ -3,10 +3,13 @@
 pub mod claims;
 pub mod public;
 
+use std::time::Duration;
+
 pub use claims::Claims;
 pub use public::SigningKey;
 
 use thiserror::Error;
+use time::OffsetDateTime;
 use tracing::error;
 
 /// An error that occurs while processing a user token.
@@ -29,9 +32,10 @@ pub struct UserToken {
 
 impl UserToken {
     /// Sign a user token as a Paseto
-    pub fn sign(&self, key: &SigningKey) -> Result<String, Error> {
+    pub fn sign(&self, key: &SigningKey, lifetime: Duration) -> Result<String, Error> {
         let claims = Claims::new()
             .with_subject(&self.id)?
+            .with_expiration(&(OffsetDateTime::now_utc() + lifetime))?
             .with_custom_claim("name", self.name.as_str())?
             .with_custom_claim("email", self.email.as_str())?
             .with_custom_claim("group", self.groups.clone())?;

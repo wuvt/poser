@@ -1,6 +1,7 @@
 //! A route for requesting tokens from a user session.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use crate::token::{SigningKey, UserToken};
 use crate::ServerState;
@@ -51,12 +52,23 @@ pub async fn token_handler(
         Error::InvalidSessionToken
     })?;
 
-    let token = build_token(&session_id, &state.db, &state.config.key).await?;
+    let token = build_token(
+        &session_id,
+        &state.db,
+        &state.config.key,
+        state.config.token_lifetime,
+    )
+    .await?;
 
     Ok(Json(json!({ "expires_in": 3600, "id_token": token })).into_response())
 }
 
-async fn build_token(session_id: &Uuid, db: &Client, key: &SigningKey) -> Result<String, Error> {
+async fn build_token(
+    session_id: &Uuid,
+    db: &Client,
+    key: &SigningKey,
+    lifetime: Duration,
+) -> Result<String, Error> {
     let session = db
         .query_one("SELECT * from session WHERE id = $1::UUID", &[&session_id])
         .await
@@ -78,7 +90,7 @@ async fn build_token(session_id: &Uuid, db: &Client, key: &SigningKey) -> Result
         groups: session.get("groups"),
     };
 
-    token.sign(key).map_err(|e| {
+    token.sign(key, lifetime).map_err(|e| {
         error!("error generating token: {}", e);
         Error::TokenError
     })

@@ -49,10 +49,10 @@ pub enum Error {
 pub const ENV_LISTEN_ADDR: &str = "POSER_AUTH_LISTEN_ADDR";
 pub const ENV_SITE_URL: &str = "POSER_AUTH_SITE_URL";
 pub const ENV_DATABASE_URI: &str = "POSER_AUTH_DATABASE_URI";
-pub const ENV_SHUTDOWN_GRACE_PERIOD: &str = "POSER_AUTH_SHUTDOWN_GRACE_PERIOD";
-
+pub const ENV_TOKEN_LIFETIME: &str = "POSER_AUTH_TOKEN_LIFETIME";
 /// An OpenSSL-compatible, PEM encoded ed25519 private key.
 pub const ENV_SECRET_KEY: &str = "POSER_AUTH_SECRET_KEY";
+pub const ENV_SHUTDOWN_GRACE_PERIOD: &str = "POSER_AUTH_SHUTDOWN_GRACE_PERIOD";
 
 pub const ENV_COOKIE_NAME: &str = "POSER_AUTH_COOKIE_NAME";
 pub const ENV_COOKIE_SECRET: &str = "POSER_AUTH_COOKIE_SECRET";
@@ -69,6 +69,7 @@ pub const ENV_GOOGLE_ADMIN_EMAIL: &str = "POSER_AUTH_GOOGLE_ADMIN_EMAIL";
 pub const DEFAULT_LISTEN_ADDR: &str = "127.0.0.1:8080";
 pub const DEFAULT_SITE_URL: &str = "http://localhost:8080";
 pub const DEFAULT_DATABASE_URI: &str = "postgresql://poser@localhost/poser";
+pub const DEFAULT_TOKEN_LIFETIME: &str = "10m";
 pub const DEFAULT_SHUTDOWN_GRACE_PERIOD: &str = "60s";
 
 pub const DEFAULT_COOKIE_NAME: &str = "_poser_auth";
@@ -82,6 +83,7 @@ pub struct Config {
     pub addr: SocketAddr,
     pub database: String,
     pub site_url: Url,
+    pub token_lifetime: Duration,
     pub key: SigningKey,
     pub cookie: CookieConfig,
     pub google: GoogleConfig,
@@ -119,6 +121,9 @@ impl Config {
 
         let site_url_raw = get_env_default(ENV_SITE_URL, DEFAULT_SITE_URL)?;
         let site_url = parse_url(site_url_raw)?;
+
+        let token_lifetime_raw = get_env_default(ENV_TOKEN_LIFETIME, DEFAULT_TOKEN_LIFETIME)?;
+        let token_lifetime = parse_duration(token_lifetime_raw)?;
 
         let key_raw = get_env(ENV_SECRET_KEY)?.ok_or_else(|| {
             error!("expected private key");
@@ -191,6 +196,7 @@ impl Config {
             addr,
             database,
             site_url,
+            token_lifetime,
             key,
             cookie,
             google,
@@ -248,7 +254,7 @@ fn parse_bool(str: String) -> Result<bool, Error> {
 }
 
 fn parse_duration(str: String) -> Result<Duration, Error> {
-    let re = Regex::new(r"^\s*(\d+)(ns|us|ms|s)?\s*$").expect("build duration regex");
+    let re = Regex::new(r"^\s*(\d+)(ns|us|ms|s|m|h)?\s*$").expect("build duration regex");
     let caps = re.captures(&str).ok_or_else(|| {
         error!("unrecognised duration format");
         Error::InvalidDuration
@@ -263,8 +269,9 @@ fn parse_duration(str: String) -> Result<Duration, Error> {
         Some("ns") => Ok(Duration::from_nanos(value)),
         Some("us") => Ok(Duration::from_micros(value)),
         Some("ms") => Ok(Duration::from_millis(value)),
-        Some("s") => Ok(Duration::from_secs(value)),
-        None => Ok(Duration::from_secs(value)),
+        Some("s") | None => Ok(Duration::from_secs(value)),
+        Some("m") => Ok(Duration::from_secs(value * 60)),
+        Some("h") => Ok(Duration::from_secs(value * 60 * 60)),
         Some(s) => {
             error!("unrecognised duration suffix: {}", s);
             Err(Error::InvalidDuration)
