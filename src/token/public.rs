@@ -103,15 +103,11 @@ fn pre_auth_encode(pieces: &[&[u8]]) -> Bytes {
 mod tests {
     use super::*;
 
-    use ed25519_dalek::SECRET_KEY_LENGTH;
     use hex_literal::hex;
 
     #[test]
     fn decode_pem() {
-        let secret_key: [u8; SECRET_KEY_LENGTH] = [
-            223, 102, 004, 198, 203, 162, 190, 016, 206, 137, 153, 124, 016, 013, 224, 179, 239,
-            117, 207, 173, 054, 008, 070, 081, 194, 201, 131, 119, 059, 140, 015, 143,
-        ];
+        let secret_key = hex!("DF6604C6CBA2BE10CE89997C100DE0B3EF75CFAD36084651C2C983773B8C0F8F");
         let pem = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIN9mBMbLor4QzomZfBAN4LPvdc+tNghGUcLJg3c7jA+P\n-----END PRIVATE KEY-----\n";
 
         let signing_key = SigningKey::from_pem(pem).expect("decode pem");
