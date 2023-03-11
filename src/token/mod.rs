@@ -31,10 +31,10 @@ impl UserToken {
     /// Sign a user token as a Paseto
     pub fn sign(&self, key: &SigningKey) -> Result<String, Error> {
         let claims = Claims::new()
-            .set_subject(&self.id)?
-            .set_custom_claim("name", self.name.as_str())?
-            .set_custom_claim("email", self.email.as_str())?
-            .set_custom_claim("group", self.groups.clone())?;
+            .with_subject(&self.id)?
+            .with_custom_claim("name", self.name.as_str())?
+            .with_custom_claim("email", self.email.as_str())?
+            .with_custom_claim("group", self.groups.clone())?;
 
         key.sign(&claims, None, None).map_err(|_| {
             error!("error signing paseto");
