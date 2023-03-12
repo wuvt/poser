@@ -1,6 +1,7 @@
 //! User tokens.
 
 pub mod claims;
+pub mod local;
 pub mod public;
 
 use std::time::Duration;
