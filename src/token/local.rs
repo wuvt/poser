@@ -1,6 +1,7 @@
 //! Paseto version 4 local tokens.
 
-use crate::token::{claims::Claims, pre_auth_encode};
+use crate::token::claims::{Claims, ClaimsValidator};
+use crate::token::pre_auth_encode;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use blake2::{
@@ -42,6 +43,8 @@ pub enum Error {
     AuthFailure,
     #[error("unable to decode claims as json")]
     DecodeError,
+    #[error("token claims failed validation")]
+    BadClaims,
 }
 
 /// A key for signing Paseto.
@@ -157,18 +160,27 @@ impl SecretKey {
         }
     }
 
-    /// Decrypt a local token, TODO: checking it against a claims validator.
+    /// Decrypt a local token, checking it against a claims validator.
     ///
     /// # Errors
     ///
     /// If any of the claims is unable to be serialized as JSON, an error is
     /// returned.
-    pub fn decrypt(&self, token: &str, implicit: Option<&[u8]>) -> Result<String, Error> {
+    pub fn decrypt(
+        &self,
+        token: &str,
+        validator: &ClaimsValidator,
+        implicit: Option<&[u8]>,
+    ) -> Result<Claims, Error> {
         let (message, _) = self.decrypt_message(token.as_bytes(), implicit)?;
 
         let claims = serde_json::from_slice(&message).map_err(|_| Error::DecodeError)?;
 
-        Ok(claims)
+        if validator.validate(&claims) {
+            Ok(claims)
+        } else {
+            Err(Error::BadClaims)
+        }
     }
 }
 

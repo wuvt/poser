@@ -297,6 +297,56 @@ fn format_time(time: &OffsetDateTime) -> Result<String, Error> {
     time.format(&Rfc3339).map_err(|_| Error::SerializeError)
 }
 
+/// A collection of rules to validate a set of claims against.
+pub struct ClaimsValidator(Vec<Box<dyn Fn(&Claims) -> bool>>);
+
+impl ClaimsValidator {
+    /// Create a claims validator. By default, the validator will check that
+    /// "Not Before" is set and before the current time, "Issued At" is set
+    /// and before the current time, and "Expiration" is set and after the
+    /// current time.
+    pub fn new() -> Self {
+        Self::empty().with_rule(default_rule)
+    }
+
+    /// Create a claims validator without the default validation rules.
+    pub fn empty() -> Self {
+        Self(Vec::new())
+    }
+
+    /// Add a new rule to a claims validator.
+    pub fn with_rule<F: Fn(&Claims) -> bool + 'static>(mut self, rule: F) -> Self {
+        self.0.push(Box::new(rule));
+
+        self
+    }
+
+    /// Validate a set of claims with a claims validator.
+    pub fn validate(&self, claims: &Claims) -> bool {
+        for f in &self.0 {
+            if !f(claims) {
+                return false;
+            }
+        }
+
+        true
+    }
+}
+
+fn default_rule(claims: &Claims) -> bool {
+    if let Some(exp) = claims.expiration() {
+        if let Some(nbf) = claims.not_before() {
+            if let Some(iat) = claims.issued_at() {
+                let now = OffsetDateTime::now_utc();
+
+                return exp >= now && nbf <= now && iat <= now;
+            }
+        }
+    }
+
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,5 +411,30 @@ mod tests {
         let claims = Claims::new().non_expiring().expect("set as non-expiring");
 
         assert_eq!(claims.0.get("exp"), None);
+    }
+
+    #[test]
+    fn validation() {
+        let validator = ClaimsValidator::new();
+
+        let normal = Claims::new();
+        assert!(validator.validate(&normal));
+
+        let bad_exp = Claims::new()
+            .with_expiration(&OffsetDateTime::UNIX_EPOCH)
+            .expect("set expiration");
+        assert!(!validator.validate(&bad_exp));
+
+        let now_offset = OffsetDateTime::now_utc() + Duration::hours(1);
+
+        let bad_nbf = Claims::new()
+            .with_not_before(&now_offset)
+            .expect("set not before");
+        assert!(!validator.validate(&bad_nbf));
+
+        let bad_iat = Claims::new()
+            .with_issued_at(&now_offset)
+            .expect("set issued at");
+        assert!(!validator.validate(&bad_iat));
     }
 }
