@@ -5,11 +5,10 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::token::SigningKey;
+use crate::token::{SecretKey, SigningKey};
 
-use ct_codecs::{Base64, Decoder};
+use base64ct::{Base64, Encoding};
 use openidconnect::{url::Url, ClientId, ClientSecret};
-use pasetors::{keys::SymmetricKey, version4::V4};
 use regex::Regex;
 use thiserror::Error;
 use tracing::{error, trace};
@@ -94,7 +93,7 @@ pub struct Config {
 #[derive(Clone, Debug)]
 pub struct CookieConfig {
     pub name: String,
-    pub secret: SymmetricKey<V4>,
+    pub secret: SecretKey,
     pub secure: bool,
 }
 
@@ -234,13 +233,13 @@ fn parse_url(str: String) -> Result<Url, Error> {
     })
 }
 
-fn parse_secret_key(str: String) -> Result<SymmetricKey<V4>, Error> {
-    let decoded = Base64::decode_to_vec(str, None).map_err(|_| {
+fn parse_secret_key(str: String) -> Result<SecretKey, Error> {
+    let decoded = Base64::decode_vec(&str).map_err(|_| {
         error!("failed to decode cookie secret as base64");
         Error::InvalidBase64
     })?;
 
-    SymmetricKey::<V4>::from(&decoded).map_err(|_| {
+    SecretKey::from_slice(&decoded).map_err(|_| {
         error!("failed to interprete cookie secret as encryption key");
         Error::InvalidSymmetricKey
     })

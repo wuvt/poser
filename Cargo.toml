@@ -6,21 +6,17 @@ edition = "2021"
 [dependencies]
 axum = { version = "0.6", features = ["macros"] }
 base64 = "0.21"
+base64ct = "1.6"
 blake2 = "0.10"
 bytes = "1.0"
 chacha20 = "0.9"
-ct-codecs = "1.1"
-ed25519 = "2.2"
-ed25519-compact = "2.0"
 getrandom = "0.2"
 openidconnect = "2.5"
-pasetors = "0.6"
-pkcs8 = "0.10"
-ring = "0.16"
 regex = "1.7"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 signature = "2.0"
+subtle = "2.4"
 thiserror = "1.0"
 time = { version = "0.3", features = ["formatting", "parsing"] }
 tokio = { version = "1.25", features = ["full"] }

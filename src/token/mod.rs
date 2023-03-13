@@ -6,7 +6,8 @@ pub mod public;
 
 use std::time::Duration;
 
-pub use claims::Claims;
+pub use claims::{Claims, ClaimsValidator};
+pub use local::SecretKey;
 pub use public::SigningKey;
 
 use bytes::{BufMut, Bytes, BytesMut};

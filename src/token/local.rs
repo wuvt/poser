@@ -143,7 +143,7 @@ impl SecretKey {
             .chain_update(pre_auth_encode(&[
                 LOCAL_HEADER.as_bytes(),
                 nonce,
-                &c,
+                c,
                 footer.as_deref().unwrap_or(&[]),
                 implicit.unwrap_or(&[]),
             ]))
@@ -184,7 +184,9 @@ impl SecretKey {
     }
 }
 
-fn split_key(base_key: &[u8], split_nonce: &[u8]) -> Result<([u8; 32], [u8; 24], [u8; 32]), Error> {
+type SplitKey = ([u8; 32], [u8; 24], [u8; 32]);
+
+fn split_key(base_key: &[u8], split_nonce: &[u8]) -> Result<SplitKey, Error> {
     let enc_hash = Blake2bMac::<U56>::new_from_slice(base_key)
         .map_err(|_| Error::SizeError)?
         .chain_update([DOMAIN_ENCRYPT, split_nonce].concat())

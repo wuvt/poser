@@ -3,7 +3,7 @@
 use crate::token::{claims::Claims, pre_auth_encode};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use pkcs8::DecodePrivateKey;
+use ed25519_dalek::pkcs8::DecodePrivateKey;
 use signature::Signer;
 use thiserror::Error;
 

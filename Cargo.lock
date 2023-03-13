@@ -259,12 +259,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ct-codecs"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3b7eb4404b8195a9abb6356f4ac07d8ba267045c8d6d220ac4dc992e6cc75df"
-
-[[package]]
 name = "curve25519-dalek"
 version = "4.0.0-rc.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -388,16 +382,6 @@ checksum = "be522bee13fa6d8059f4903a4084aa3bd50725e18150202f0238deb615cd6371"
 dependencies = [
  "pkcs8",
  "signature",
-]
-
-[[package]]
-name = "ed25519-compact"
-version = "2.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a3d382e8464107391c8706b4c14b087808ecb909f6c15c34114bc42e53a9e4c"
-dependencies = [
- "ct-codecs",
- "getrandom",
 ]
 
 [[package]]
@@ -967,17 +951,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "orion"
-version = "0.17.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2baf7fd2e326e3895c681176788dd227fcd8369350e53c570592d8563fecbb6"
-dependencies = [
- "fiat-crypto",
- "subtle",
- "zeroize",
-]
-
-[[package]]
 name = "overload"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1014,23 +987,6 @@ dependencies = [
  "redox_syscall",
  "smallvec",
  "windows-sys 0.45.0",
-]
-
-[[package]]
-name = "pasetors"
-version = "0.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed20c4c21d893414f42e0cbfebe8a8036b5ae9b0264611fb6504e395eda6ceec"
-dependencies = [
- "ct-codecs",
- "ed25519-compact",
- "getrandom",
- "orion",
- "regex",
- "serde_json",
- "subtle",
- "time",
- "zeroize",
 ]
 
 [[package]]
@@ -1120,23 +1076,19 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64 0.21.0",
+ "base64ct",
  "blake2",
  "bytes",
  "chacha20",
- "ct-codecs",
- "ed25519",
- "ed25519-compact",
  "ed25519-dalek",
  "getrandom",
  "hex-literal",
  "openidconnect",
- "pasetors",
- "pkcs8",
  "regex",
- "ring",
  "serde",
  "serde_json",
  "signature",
+ "subtle",
  "thiserror",
  "time",
  "tokio",

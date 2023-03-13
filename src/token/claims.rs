@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 use time::{format_description::well_known::Rfc3339, Duration, OffsetDateTime};
@@ -22,8 +22,8 @@ pub enum Error {
     RegisteredClaim,
     #[error("cannot serialize value as json")]
     SerializeError,
-    #[error("unable to parse value")]
-    ParseError,
+    #[error("cannot interpret json value as given type")]
+    DeserializeError,
 }
 
 /// Registered Paseto claims. These claims can only be modified through the
@@ -77,6 +77,21 @@ impl Claims {
     /// Returns [`None`] if the claim is not set.
     pub fn get(&self, claim: &str) -> Option<&Value> {
         self.0.get(claim)
+    }
+
+    /// Get the JSON value of a claim, parsed to a deserializable type. While
+    /// this can be used to access reserved claims, the convenience methods
+    /// should be preferred as they additionally parse the value.
+    ///
+    /// Returns [`None`] if the claim is not set.
+    ///
+    /// # Errors
+    ///
+    /// Will return an error the claim cannot be parsed as the given type.
+    pub fn get_value<D: DeserializeOwned>(&self, claim: &str) -> Option<Result<D, Error>> {
+        self.0
+            .get(claim)
+            .map(|v| serde_json::from_value(v.clone()).map_err(|_| Error::DeserializeError))
     }
 
     fn set_unchecked<V>(&mut self, claim: &str, value: V) -> Result<(), Error>
@@ -297,8 +312,10 @@ fn format_time(time: &OffsetDateTime) -> Result<String, Error> {
     time.format(&Rfc3339).map_err(|_| Error::SerializeError)
 }
 
+type Rule = Box<dyn Fn(&Claims) -> bool>;
+
 /// A collection of rules to validate a set of claims against.
-pub struct ClaimsValidator(Vec<Box<dyn Fn(&Claims) -> bool>>);
+pub struct ClaimsValidator(Vec<Rule>);
 
 impl ClaimsValidator {
     /// Create a claims validator. By default, the validator will check that
@@ -345,6 +362,12 @@ fn default_rule(claims: &Claims) -> bool {
     }
 
     false
+}
+
+impl Default for ClaimsValidator {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
