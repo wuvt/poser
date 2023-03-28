@@ -1,15 +1,12 @@
 //! Paseto version 4 public tokens.
 
-use super::claims::Claims;
+use crate::token::{claims::Claims, to_64_le};
 
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use bytes::{BufMut, Bytes, BytesMut};
-use ed25519::Signature;
-use pkcs8::DecodePrivateKey;
-use signature::Signer;
+use base64::{encoded_len, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use ed25519_dalek::{ed25519::signature::Signer, pkcs8::DecodePrivateKey, SIGNATURE_LENGTH};
 use thiserror::Error;
 
-const PUBLIC_HEADER: &str = "v4.public.";
+pub const PUBLIC_HEADER: &str = "v4.public.";
 
 /// Errors while interacting with public tokens.
 #[derive(Error, Clone, Debug)]
@@ -40,23 +37,22 @@ impl SigningKey {
         footer: Option<&[u8]>,
         implicit: Option<&[u8]>,
     ) -> String {
-        let pae = pre_auth_encode(&[
+        let sig = self.0.sign(&pre_auth_encode(&[
             PUBLIC_HEADER.as_bytes(),
             message,
             footer.unwrap_or(&[]),
             implicit.unwrap_or(&[]),
-        ]);
-        let sig = self.0.sign(&pae);
+        ]));
 
-        let mut body = Vec::with_capacity(message.len() + Signature::BYTE_SIZE);
-        body.extend_from_slice(message);
-        body.extend_from_slice(&sig.to_bytes());
-
-        let mut token = PUBLIC_HEADER.to_string();
-        token += &URL_SAFE_NO_PAD.encode(&body);
+        let size = PUBLIC_HEADER.len()
+            + encoded_len(message.len() + SIGNATURE_LENGTH, false).unwrap()
+            + footer.map_or(0, |f| encoded_len(f.len(), false).unwrap() + 1);
+        let mut token = String::with_capacity(size);
+        token += PUBLIC_HEADER;
+        URL_SAFE_NO_PAD.encode_string([message, &sig.to_bytes()].concat(), &mut token);
         if let Some(footer) = footer {
             token += ".";
-            token += &URL_SAFE_NO_PAD.encode(footer);
+            URL_SAFE_NO_PAD.encode_string(footer, &mut token);
         }
 
         token
@@ -81,22 +77,20 @@ impl SigningKey {
     }
 }
 
-fn pre_auth_encode(pieces: &[&[u8]]) -> Bytes {
+fn pre_auth_encode(pieces: &[&[u8]]) -> Vec<u8> {
     let mut capacity = 8;
     for piece in pieces {
         capacity += 8 + piece.len();
     }
 
-    // bitmasks since the Paseto standard requires that the highest bit of
-    // each unsigned integer is unset
-    let mut pae = BytesMut::with_capacity(capacity);
-    pae.put_u64_le(pieces.len() as u64 & 0x7FFFFFFFFFFFFF);
+    let mut pae = Vec::with_capacity(capacity);
+    pae.extend_from_slice(&to_64_le(pieces.len()));
     for piece in pieces {
-        pae.put_u64_le(piece.len() as u64 & 0x7FFFFFFFFFFFFF);
-        pae.put_slice(piece);
+        pae.extend_from_slice(&to_64_le(piece.len()));
+        pae.extend_from_slice(piece);
     }
 
-    pae.freeze()
+    pae
 }
 
 #[cfg(test)]
@@ -107,12 +101,10 @@ mod tests {
 
     #[test]
     fn decode_pem() {
-        let secret_key = hex!("DF6604C6CBA2BE10CE89997C100DE0B3EF75CFAD36084651C2C983773B8C0F8F");
-        let pem = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIN9mBMbLor4QzomZfBAN4LPvdc+tNghGUcLJg3c7jA+P\n-----END PRIVATE KEY-----\n";
+        let key_bytes = hex!("DF6604C6CBA2BE10CE89997C100DE0B3EF75CFAD36084651C2C983773B8C0F8F");
 
-        let signing_key = SigningKey::from_pem(pem).expect("decode pem");
-
-        assert_eq!(secret_key, signing_key.0.to_bytes())
+        let key = SigningKey::from_pem("-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIN9mBMbLor4QzomZfBAN4LPvdc+tNghGUcLJg3c7jA+P\n-----END PRIVATE KEY-----\n").expect("decode pem");
+        assert_eq!(key.0.to_bytes(), key_bytes);
     }
 
     #[test]
@@ -127,23 +119,44 @@ mod tests {
         assert_eq!(*three, hex!("0100000000000000 0400000000000000 74657374"));
     }
 
-    #[test]
-    fn public_sign() {
-        let pem = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEILTL+0PfTOIQcn2VPkpxMwf6Gbt9n4UEFDjZ4RuUKjd0\n-----END PRIVATE KEY-----\n";
-        let signing_key = SigningKey::from_pem(pem).expect("decode pem");
+    macro_rules! test_vector {
+        ($vec_name:ident, $token:expr, $payload:expr, $footer:expr, $implicit:expr) => {
+            #[test]
+            fn $vec_name() {
+                let token: &str = $token;
+                let payload: &[u8] = $payload;
+                let footer: Option<&[u8]> = $footer;
+                let implicit: Option<&[u8]> = $implicit;
 
-        let payload =
-            b"{\"data\":\"this is a signed message\",\"exp\":\"2022-01-01T00:00:00+00:00\"}";
-        let footer = b"{\"kid\":\"zVhMiPBP9fRf2snEcT7gFTioeA9COcNy9DfgL1W60haN\"}";
-        let implicit = b"{\"test-vector\":\"4-S-3\"}";
+                let key = SigningKey::from_pem("-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEILTL+0PfTOIQcn2VPkpxMwf6Gbt9n4UEFDjZ4RuUKjd0\n-----END PRIVATE KEY-----\n").expect("decode pem");
 
-        let one = signing_key.sign_message(payload, None, None);
-        assert_eq!(one, "v4.public.eyJkYXRhIjoidGhpcyBpcyBhIHNpZ25lZCBtZXNzYWdlIiwiZXhwIjoiMjAyMi0wMS0wMVQwMDowMDowMCswMDowMCJ9bg_XBBzds8lTZShVlwwKSgeKpLT3yukTw6JUz3W4h_ExsQV-P0V54zemZDcAxFaSeef1QlXEFtkqxT1ciiQEDA");
-
-        let two = signing_key.sign_message(payload, Some(footer), None);
-        assert_eq!(two, "v4.public.eyJkYXRhIjoidGhpcyBpcyBhIHNpZ25lZCBtZXNzYWdlIiwiZXhwIjoiMjAyMi0wMS0wMVQwMDowMDowMCswMDowMCJ9v3Jt8mx_TdM2ceTGoqwrh4yDFn0XsHvvV_D0DtwQxVrJEBMl0F2caAdgnpKlt4p7xBnx1HcO-SPo8FPp214HDw.eyJraWQiOiJ6VmhNaVBCUDlmUmYyc25FY1Q3Z0ZUaW9lQTlDT2NOeTlEZmdMMVc2MGhhTiJ9");
-
-        let three = signing_key.sign_message(payload, Some(footer), Some(implicit));
-        assert_eq!(three, "v4.public.eyJkYXRhIjoidGhpcyBpcyBhIHNpZ25lZCBtZXNzYWdlIiwiZXhwIjoiMjAyMi0wMS0wMVQwMDowMDowMCswMDowMCJ9NPWciuD3d0o5eXJXG5pJy-DiVEoyPYWs1YSTwWHNJq6DZD3je5gf-0M4JR9ipdUSJbIovzmBECeaWmaqcaP0DQ.eyJraWQiOiJ6VmhNaVBCUDlmUmYyc25FY1Q3Z0ZUaW9lQTlDT2NOeTlEZmdMMVc2MGhhTiJ9");
+                let sign = key.sign_message(payload, footer, implicit);
+                assert_eq!(sign, token);
+            }
+        };
     }
+
+    test_vector!(
+        vec_4_s_1,
+        "v4.public.eyJkYXRhIjoidGhpcyBpcyBhIHNpZ25lZCBtZXNzYWdlIiwiZXhwIjoiMjAyMi0wMS0wMVQwMDowMDowMCswMDowMCJ9bg_XBBzds8lTZShVlwwKSgeKpLT3yukTw6JUz3W4h_ExsQV-P0V54zemZDcAxFaSeef1QlXEFtkqxT1ciiQEDA",
+        b"{\"data\":\"this is a signed message\",\"exp\":\"2022-01-01T00:00:00+00:00\"}",
+        None,
+        None
+    );
+
+    test_vector!(
+        vec_4_s_2,
+        "v4.public.eyJkYXRhIjoidGhpcyBpcyBhIHNpZ25lZCBtZXNzYWdlIiwiZXhwIjoiMjAyMi0wMS0wMVQwMDowMDowMCswMDowMCJ9v3Jt8mx_TdM2ceTGoqwrh4yDFn0XsHvvV_D0DtwQxVrJEBMl0F2caAdgnpKlt4p7xBnx1HcO-SPo8FPp214HDw.eyJraWQiOiJ6VmhNaVBCUDlmUmYyc25FY1Q3Z0ZUaW9lQTlDT2NOeTlEZmdMMVc2MGhhTiJ9",
+        b"{\"data\":\"this is a signed message\",\"exp\":\"2022-01-01T00:00:00+00:00\"}",
+        Some(b"{\"kid\":\"zVhMiPBP9fRf2snEcT7gFTioeA9COcNy9DfgL1W60haN\"}"),
+        None
+    );
+
+    test_vector!(
+        vec_4_s_3,
+        "v4.public.eyJkYXRhIjoidGhpcyBpcyBhIHNpZ25lZCBtZXNzYWdlIiwiZXhwIjoiMjAyMi0wMS0wMVQwMDowMDowMCswMDowMCJ9NPWciuD3d0o5eXJXG5pJy-DiVEoyPYWs1YSTwWHNJq6DZD3je5gf-0M4JR9ipdUSJbIovzmBECeaWmaqcaP0DQ.eyJraWQiOiJ6VmhNaVBCUDlmUmYyc25FY1Q3Z0ZUaW9lQTlDT2NOeTlEZmdMMVc2MGhhTiJ9",
+        b"{\"data\":\"this is a signed message\",\"exp\":\"2022-01-01T00:00:00+00:00\"}",
+        Some(b"{\"kid\":\"zVhMiPBP9fRf2snEcT7gFTioeA9COcNy9DfgL1W60haN\"}"),
+        Some(b"{\"test-vector\":\"4-S-3\"}")
+    );
 }

@@ -1,11 +1,13 @@
 //! User tokens.
 
 pub mod claims;
+pub mod local;
 pub mod public;
 
 use std::time::Duration;
 
-pub use claims::Claims;
+pub use claims::{Claims, ClaimsValidator};
+pub use local::SecretKey;
 pub use public::SigningKey;
 
 use thiserror::Error;
@@ -45,4 +47,10 @@ impl UserToken {
             Error::SigningError
         })
     }
+}
+
+// this applies a bitmask since the Paseto standard requires that the highest
+// bit of each unsigned integer is unset
+fn to_64_le(n: usize) -> [u8; 8] {
+    (n as u64 & 0x7FFFFFFFFFFFFF).to_le_bytes()
 }

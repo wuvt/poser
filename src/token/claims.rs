@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 use time::{format_description::well_known::Rfc3339, Duration, OffsetDateTime};
@@ -22,8 +22,8 @@ pub enum Error {
     RegisteredClaim,
     #[error("cannot serialize value as json")]
     SerializeError,
-    #[error("unable to parse value")]
-    ParseError,
+    #[error("cannot interpret json value as given type")]
+    DeserializeError,
 }
 
 /// Registered Paseto claims. These claims can only be modified through the
@@ -77,6 +77,21 @@ impl Claims {
     /// Returns [`None`] if the claim is not set.
     pub fn get(&self, claim: &str) -> Option<&Value> {
         self.0.get(claim)
+    }
+
+    /// Get the JSON value of a claim, parsed to a deserializable type. While
+    /// this can be used to access reserved claims, the convenience methods
+    /// should be preferred as they additionally parse the value.
+    ///
+    /// Returns [`None`] if the claim is not set.
+    ///
+    /// # Errors
+    ///
+    /// Will return an error the claim cannot be parsed as the given type.
+    pub fn get_value<D: DeserializeOwned>(&self, claim: &str) -> Option<Result<D, Error>> {
+        self.0
+            .get(claim)
+            .map(|v| serde_json::from_value(v.clone()).map_err(|_| Error::DeserializeError))
     }
 
     fn set_unchecked<V>(&mut self, claim: &str, value: V) -> Result<(), Error>
@@ -297,6 +312,64 @@ fn format_time(time: &OffsetDateTime) -> Result<String, Error> {
     time.format(&Rfc3339).map_err(|_| Error::SerializeError)
 }
 
+type Rule = Box<dyn Fn(&Claims) -> bool>;
+
+/// A collection of rules to validate a set of claims against.
+pub struct ClaimsValidator(Vec<Rule>);
+
+impl ClaimsValidator {
+    /// Create a claims validator. By default, the validator will check that
+    /// "Not Before" is set and before the current time, "Issued At" is set
+    /// and before the current time, and "Expiration" is set and after the
+    /// current time.
+    pub fn new() -> Self {
+        Self::empty().with_rule(default_rule)
+    }
+
+    /// Create a claims validator without the default validation rules.
+    pub fn empty() -> Self {
+        Self(Vec::new())
+    }
+
+    /// Add a new rule to a claims validator.
+    pub fn with_rule<F: Fn(&Claims) -> bool + 'static>(mut self, rule: F) -> Self {
+        self.0.push(Box::new(rule));
+
+        self
+    }
+
+    /// Validate a set of claims with a claims validator.
+    pub fn validate(&self, claims: &Claims) -> bool {
+        for f in &self.0 {
+            if !f(claims) {
+                return false;
+            }
+        }
+
+        true
+    }
+}
+
+fn default_rule(claims: &Claims) -> bool {
+    if let Some(exp) = claims.expiration() {
+        if let Some(nbf) = claims.not_before() {
+            if let Some(iat) = claims.issued_at() {
+                let now = OffsetDateTime::now_utc();
+
+                return exp >= now && nbf <= now && iat <= now;
+            }
+        }
+    }
+
+    false
+}
+
+impl Default for ClaimsValidator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,5 +434,30 @@ mod tests {
         let claims = Claims::new().non_expiring().expect("set as non-expiring");
 
         assert_eq!(claims.0.get("exp"), None);
+    }
+
+    #[test]
+    fn validation() {
+        let validator = ClaimsValidator::new();
+
+        let normal = Claims::new();
+        assert!(validator.validate(&normal));
+
+        let bad_exp = Claims::new()
+            .with_expiration(&OffsetDateTime::UNIX_EPOCH)
+            .expect("set expiration");
+        assert!(!validator.validate(&bad_exp));
+
+        let now_offset = OffsetDateTime::now_utc() + Duration::hours(1);
+
+        let bad_nbf = Claims::new()
+            .with_not_before(&now_offset)
+            .expect("set not before");
+        assert!(!validator.validate(&bad_nbf));
+
+        let bad_iat = Claims::new()
+            .with_issued_at(&now_offset)
+            .expect("set issued at");
+        assert!(!validator.validate(&bad_iat));
     }
 }
