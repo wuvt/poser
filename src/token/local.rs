@@ -3,7 +3,7 @@
 use crate::token::claims::{Claims, ClaimsValidator};
 use crate::token::to_64_le;
 
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{encoded_len, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use blake2::{
     digest::{
         consts::{U24, U32, U56},
@@ -76,11 +76,15 @@ impl SecretKey {
             .into_bytes();
         auth_key.zeroize();
 
-        let mut token = LOCAL_HEADER.to_string();
-        token += &URL_SAFE_NO_PAD.encode([nonce, &c, &mac].concat());
+        let size = LOCAL_HEADER.len()
+            + encoded_len(nonce.len() + c.len() + mac.len(), false).unwrap()
+            + footer.map_or(0, |f| encoded_len(f.len(), false).unwrap() + 1);
+        let mut token = String::with_capacity(size);
+        token += LOCAL_HEADER;
+        URL_SAFE_NO_PAD.encode_string([nonce, &c, &mac].concat(), &mut token);
         if let Some(footer) = footer {
             token += ".";
-            token += &URL_SAFE_NO_PAD.encode(footer);
+            URL_SAFE_NO_PAD.encode_string(footer, &mut token);
         }
 
         token

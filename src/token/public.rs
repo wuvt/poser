@@ -2,8 +2,8 @@
 
 use crate::token::{claims::Claims, to_64_le};
 
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use ed25519_dalek::{ed25519::signature::Signer, pkcs8::DecodePrivateKey};
+use base64::{encoded_len, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use ed25519_dalek::{ed25519::signature::Signer, pkcs8::DecodePrivateKey, SIGNATURE_LENGTH};
 use thiserror::Error;
 
 pub const PUBLIC_HEADER: &str = "v4.public.";
@@ -44,11 +44,15 @@ impl SigningKey {
             implicit.unwrap_or(&[]),
         ]));
 
-        let mut token = PUBLIC_HEADER.to_string();
-        token += &URL_SAFE_NO_PAD.encode([message, &sig.to_bytes()].concat());
+        let size = PUBLIC_HEADER.len()
+            + encoded_len(message.len() + SIGNATURE_LENGTH, false).unwrap()
+            + footer.map_or(0, |f| encoded_len(f.len(), false).unwrap() + 1);
+        let mut token = String::with_capacity(size);
+        token += PUBLIC_HEADER;
+        URL_SAFE_NO_PAD.encode_string([message, &sig.to_bytes()].concat(), &mut token);
         if let Some(footer) = footer {
             token += ".";
-            token += &URL_SAFE_NO_PAD.encode(footer);
+            URL_SAFE_NO_PAD.encode_string(footer, &mut token);
         }
 
         token
