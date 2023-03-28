@@ -17,6 +17,7 @@ use chacha20::{
     XChaCha20,
 };
 use getrandom::getrandom;
+use subtle::ConstantTimeEq;
 use thiserror::Error;
 use zeroize::Zeroize;
 
@@ -140,8 +141,10 @@ impl SecretKey {
             .expect("generate mac for token");
         auth_key.zeroize();
 
-        // digest's CtOutput type provides constant-time comparison
-        if mac_expected == GenericArray::<u8, U32>::from_slice(mac).into() {
+        if mac_expected
+            .ct_eq(&GenericArray::<u8, U32>::from_slice(mac).into())
+            .into()
+        {
             let mut p = c.to_vec();
             XChaCha20::new(&key, &n2).apply_keystream(&mut p);
             key.zeroize();
