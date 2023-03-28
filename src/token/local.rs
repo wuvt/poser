@@ -1,14 +1,14 @@
 //! Paseto version 4 local tokens.
 
 use crate::token::claims::{Claims, ClaimsValidator};
-use crate::token::pre_auth_encode;
+use crate::token::to_64_le;
 
-use base64::{encoded_len, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use blake2::{
     digest::{
         consts::{U24, U32, U56},
         generic_array::GenericArray,
-        Mac,
+        CtOutput, Mac,
     },
     Blake2bMac,
 };
@@ -64,24 +64,15 @@ impl SecretKey {
         footer: Option<&[u8]>,
         implicit: Option<&[u8]>,
     ) -> String {
-        // unwrapping is safe here since key size has already been checked
-        let (mut key, mut n2, mut auth_key) = split_key(&self.0, nonce).unwrap();
+        let (mut key, mut n2, mut auth_key) = split_key(&self.0, nonce).expect("split key");
 
         let mut c = message.to_vec();
-        XChaCha20::new(&key.into(), &n2.into()).apply_keystream(&mut c);
+        XChaCha20::new(&key, &n2).apply_keystream(&mut c);
         key.zeroize();
         n2.zeroize();
 
-        let mac = Blake2bMac::<U32>::new_from_slice(&auth_key)
-            .unwrap()
-            .chain_update(pre_auth_encode(&[
-                LOCAL_HEADER.as_bytes(),
-                nonce,
-                &c,
-                footer.unwrap_or(&[]),
-                implicit.unwrap_or(&[]),
-            ]))
-            .finalize()
+        let mac = token_mac(&auth_key, nonce, &c, footer, implicit)
+            .expect("generate mac for token")
             .into_bytes();
         auth_key.zeroize();
 
@@ -139,25 +130,16 @@ impl SecretKey {
         let (nonce, remaining) = message.split_at(32);
         let (c, mac) = remaining.split_at(remaining.len() - 32);
 
-        // unwrapping is safe here since key size has already been checked
-        let (mut key, mut n2, mut auth_key) = split_key(&self.0, nonce).unwrap();
+        let (mut key, mut n2, mut auth_key) = split_key(&self.0, nonce).expect("split key");
 
-        let mac_expected = Blake2bMac::<U32>::new_from_slice(&auth_key)
-            .unwrap()
-            .chain_update(pre_auth_encode(&[
-                LOCAL_HEADER.as_bytes(),
-                nonce,
-                c,
-                footer.as_deref().unwrap_or(&[]),
-                implicit.unwrap_or(&[]),
-            ]))
-            .finalize();
+        let mac_expected = token_mac(&auth_key, nonce, c, footer.as_deref(), implicit)
+            .expect("generate mac for token");
         auth_key.zeroize();
 
         // digest's CtOutput type provides constant-time comparison
         if mac_expected == GenericArray::<u8, U32>::from_slice(mac).into() {
             let mut p = c.to_vec();
-            XChaCha20::new(&key.into(), &n2.into()).apply_keystream(&mut p);
+            XChaCha20::new(&key, &n2).apply_keystream(&mut p);
             key.zeroize();
             n2.zeroize();
 
@@ -191,6 +173,38 @@ impl SecretKey {
     }
 }
 
+fn token_mac(
+    key: &[u8],
+    nonce: &[u8],
+    c: &[u8],
+    footer: Option<&[u8]>,
+    implicit: Option<&[u8]>,
+) -> Result<CtOutput<Blake2bMac<U32>>, Error> {
+    pre_auth_hash(
+        key,
+        &[
+            LOCAL_HEADER.as_bytes(),
+            nonce,
+            c,
+            footer.unwrap_or(&[]),
+            implicit.unwrap_or(&[]),
+        ],
+    )
+}
+
+fn pre_auth_hash(key: &[u8], pieces: &[&[u8]]) -> Result<CtOutput<Blake2bMac<U32>>, Error> {
+    let mut hash = Blake2bMac::<U32>::new_from_slice(key)
+        .map_err(|_| Error::SizeError)?
+        .chain_update(to_64_le(pieces.len()));
+
+    for piece in pieces {
+        hash.update(&to_64_le(piece.len()));
+        hash.update(piece);
+    }
+
+    Ok(hash.finalize())
+}
+
 type SplitKey = (
     GenericArray<u8, U32>,
     GenericArray<u8, U24>,
@@ -200,7 +214,8 @@ type SplitKey = (
 fn split_key(base_key: &[u8], split_nonce: &[u8]) -> Result<SplitKey, Error> {
     let mut enc_hash = Blake2bMac::<U56>::new_from_slice(base_key)
         .map_err(|_| Error::SizeError)?
-        .chain_update([DOMAIN_ENCRYPT, split_nonce].concat())
+        .chain_update(DOMAIN_ENCRYPT)
+        .chain_update(split_nonce)
         .finalize()
         .into_bytes();
 
@@ -211,7 +226,8 @@ fn split_key(base_key: &[u8], split_nonce: &[u8]) -> Result<SplitKey, Error> {
 
     let auth_key = Blake2bMac::<U32>::new_from_slice(base_key)
         .map_err(|_| Error::SizeError)?
-        .chain_update([DOMAIN_AUTH, split_nonce].concat())
+        .chain_update(DOMAIN_AUTH)
+        .chain_update(split_nonce)
         .finalize()
         .into_bytes();
 
@@ -223,6 +239,30 @@ mod tests {
     use super::*;
 
     use hex_literal::hex;
+
+    #[test]
+    fn pae_hash() {
+        let key = hex!("0000");
+        let hash = |bytes: &[u8]| {
+            Blake2bMac::<U32>::new_from_slice(&key)
+                .unwrap()
+                .chain_update(bytes)
+                .finalize()
+                .into_bytes()
+        };
+
+        let one = pre_auth_hash(&key, &[]).unwrap().into_bytes();
+        assert_eq!(one, hash(&hex!("0000000000000000")));
+
+        let two = pre_auth_hash(&key, &[b""]).unwrap().into_bytes();
+        assert_eq!(two, hash(&hex!("0100000000000000 0000000000000000")));
+
+        let three = pre_auth_hash(&key, &[b"test"]).unwrap().into_bytes();
+        assert_eq!(
+            three,
+            hash(&hex!("0100000000000000 0400000000000000 74657374"))
+        );
+    }
 
     macro_rules! test_vector {
         ($vec_name:ident, $token:expr, $payload:expr, $nonce:expr, $footer:expr, $implicit:expr) => {

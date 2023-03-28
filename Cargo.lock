@@ -1078,7 +1078,6 @@ dependencies = [
  "base64 0.21.0",
  "base64ct",
  "blake2",
- "bytes",
  "chacha20",
  "ed25519-dalek",
  "getrandom",

@@ -1,6 +1,6 @@
 //! Paseto version 4 public tokens.
 
-use crate::token::{claims::Claims, pre_auth_encode};
+use crate::token::{claims::Claims, to_64_le};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use ed25519_dalek::{ed25519::signature::Signer, pkcs8::DecodePrivateKey};
@@ -73,6 +73,22 @@ impl SigningKey {
     }
 }
 
+fn pre_auth_encode(pieces: &[&[u8]]) -> Vec<u8> {
+    let mut capacity = 8;
+    for piece in pieces {
+        capacity += 8 + piece.len();
+    }
+
+    let mut pae = Vec::with_capacity(capacity);
+    pae.extend_from_slice(&to_64_le(pieces.len()));
+    for piece in pieces {
+        pae.extend_from_slice(&to_64_le(piece.len()));
+        pae.extend_from_slice(piece);
+    }
+
+    pae
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,6 +101,18 @@ mod tests {
 
         let key = SigningKey::from_pem("-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIN9mBMbLor4QzomZfBAN4LPvdc+tNghGUcLJg3c7jA+P\n-----END PRIVATE KEY-----\n").expect("decode pem");
         assert_eq!(key.0.to_bytes(), key_bytes);
+    }
+
+    #[test]
+    fn pae() {
+        let one = pre_auth_encode(&[]);
+        assert_eq!(*one, hex!("0000000000000000"));
+
+        let two = pre_auth_encode(&[b""]);
+        assert_eq!(*two, hex!("0100000000000000 0000000000000000"));
+
+        let three = pre_auth_encode(&[b"test"]);
+        assert_eq!(*three, hex!("0100000000000000 0400000000000000 74657374"));
     }
 
     macro_rules! test_vector {
