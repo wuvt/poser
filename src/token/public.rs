@@ -3,8 +3,7 @@
 use crate::token::{claims::Claims, pre_auth_encode};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use ed25519_dalek::pkcs8::DecodePrivateKey;
-use signature::Signer;
+use ed25519_dalek::{ed25519::signature::Signer, pkcs8::DecodePrivateKey};
 use thiserror::Error;
 
 pub const PUBLIC_HEADER: &str = "v4.public.";

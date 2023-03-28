@@ -3,10 +3,10 @@
 use crate::token::claims::{Claims, ClaimsValidator};
 use crate::token::pre_auth_encode;
 
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{encoded_len, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use blake2::{
     digest::{
-        consts::{U32, U56},
+        consts::{U24, U32, U56},
         generic_array::GenericArray,
         Mac,
     },
@@ -18,6 +18,7 @@ use chacha20::{
 };
 use getrandom::getrandom;
 use thiserror::Error;
+use zeroize::Zeroize;
 
 const LOCAL_HEADER: &str = "v4.local.";
 
@@ -64,10 +65,12 @@ impl SecretKey {
         implicit: Option<&[u8]>,
     ) -> String {
         // unwrapping is safe here since key size has already been checked
-        let (key, n2, auth_key) = split_key(&self.0, nonce).unwrap();
+        let (mut key, mut n2, mut auth_key) = split_key(&self.0, nonce).unwrap();
 
         let mut c = message.to_vec();
         XChaCha20::new(&key.into(), &n2.into()).apply_keystream(&mut c);
+        key.zeroize();
+        n2.zeroize();
 
         let mac = Blake2bMac::<U32>::new_from_slice(&auth_key)
             .unwrap()
@@ -80,6 +83,7 @@ impl SecretKey {
             ]))
             .finalize()
             .into_bytes();
+        auth_key.zeroize();
 
         let mut token = LOCAL_HEADER.to_string();
         token += &URL_SAFE_NO_PAD.encode([nonce, &c, &mac].concat());
@@ -136,7 +140,7 @@ impl SecretKey {
         let (c, mac) = remaining.split_at(remaining.len() - 32);
 
         // unwrapping is safe here since key size has already been checked
-        let (key, n2, auth_key) = split_key(&self.0, nonce).unwrap();
+        let (mut key, mut n2, mut auth_key) = split_key(&self.0, nonce).unwrap();
 
         let mac_expected = Blake2bMac::<U32>::new_from_slice(&auth_key)
             .unwrap()
@@ -148,11 +152,14 @@ impl SecretKey {
                 implicit.unwrap_or(&[]),
             ]))
             .finalize();
+        auth_key.zeroize();
 
         // digest's CtOutput type provides constant-time comparison
         if mac_expected == GenericArray::<u8, U32>::from_slice(mac).into() {
             let mut p = c.to_vec();
             XChaCha20::new(&key.into(), &n2.into()).apply_keystream(&mut p);
+            key.zeroize();
+            n2.zeroize();
 
             Ok((p, footer))
         } else {
@@ -184,15 +191,23 @@ impl SecretKey {
     }
 }
 
-type SplitKey = ([u8; 32], [u8; 24], [u8; 32]);
+type SplitKey = (
+    GenericArray<u8, U32>,
+    GenericArray<u8, U24>,
+    GenericArray<u8, U32>,
+);
 
 fn split_key(base_key: &[u8], split_nonce: &[u8]) -> Result<SplitKey, Error> {
-    let enc_hash = Blake2bMac::<U56>::new_from_slice(base_key)
+    let mut enc_hash = Blake2bMac::<U56>::new_from_slice(base_key)
         .map_err(|_| Error::SizeError)?
         .chain_update([DOMAIN_ENCRYPT, split_nonce].concat())
         .finalize()
         .into_bytes();
-    let (key, nonce) = enc_hash.split_at(32);
+
+    let (head, tail) = enc_hash.split_at(32);
+    let key = GenericArray::<u8, U32>::clone_from_slice(head);
+    let nonce = GenericArray::<u8, U24>::clone_from_slice(tail);
+    enc_hash.zeroize();
 
     let auth_key = Blake2bMac::<U32>::new_from_slice(base_key)
         .map_err(|_| Error::SizeError)?
@@ -200,12 +215,7 @@ fn split_key(base_key: &[u8], split_nonce: &[u8]) -> Result<SplitKey, Error> {
         .finalize()
         .into_bytes();
 
-    // unwraps are safe here since hasher guarantees output size
-    Ok((
-        key.try_into().unwrap(),
-        nonce.try_into().unwrap(),
-        auth_key.into(),
-    ))
+    Ok((key, nonce, auth_key))
 }
 
 #[cfg(test)]
