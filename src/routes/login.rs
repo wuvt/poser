@@ -62,7 +62,7 @@ pub async fn login_handler(
     let (authorize_url, _, _) = auth.url();
 
     cookies.add(
-        Cookie::build(
+        Cookie::build((
             format!("{}_csrf", state.config.cookie.name),
             oidc_state
                 .to_cookie(&state.config.cookie.secret)
@@ -70,10 +70,10 @@ pub async fn login_handler(
                     error!("error generating OIDC cookie: {}", e);
                     Error::CookieError
                 })?,
-        )
+        ))
         .secure(state.config.cookie.secure)
         .http_only(true)
-        .finish(),
+        .build(),
     );
 
     Ok(Redirect::to(authorize_url.as_str()))

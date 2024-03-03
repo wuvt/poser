@@ -86,11 +86,11 @@ pub async fn callback_handler(
     let id = create_session(&state.db, &token, &expiration).await?;
 
     cookies.add(
-        Cookie::build(state.config.cookie.name, id.simple().to_string())
+        Cookie::build((state.config.cookie.name, id.simple().to_string()))
             .secure(state.config.cookie.secure)
             .http_only(true)
             .expires(expiration)
-            .finish(),
+            .build(),
     );
 
     Ok(Redirect::to(oidc.get_redirect()))
@@ -130,7 +130,10 @@ async fn get_token(
         error!("email missing from id token");
         Error::TokenError
     })?;
-    let expiration = claims.expiration().timestamp_nanos();
+    let expiration = claims
+        .expiration()
+        .timestamp_nanos_opt()
+        .expect("todo: fix timestamp handling before 2262");
 
     Ok((
         UserToken {

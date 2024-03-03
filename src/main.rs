@@ -19,6 +19,7 @@ pub mod routes;
 pub mod token;
 
 use std::env::var;
+use std::future::IntoFuture;
 use std::sync::Arc;
 
 use config::Config;
@@ -26,8 +27,8 @@ use oidc::setup_auth;
 use openidconnect::core::CoreClient;
 use routes::routes;
 
-use axum::Server;
 use tokio::{
+    net::TcpListener,
     runtime::Runtime,
     select,
     signal::unix::{signal, SignalKind},
@@ -86,7 +87,7 @@ fn main() {
             res
         });
 
-        let app = routes().with_state(state).layer(
+        let router = routes().with_state(state).layer(
             ServiceBuilder::new()
                 .layer(
                     TraceLayer::new_for_http()
@@ -99,9 +100,11 @@ fn main() {
                 )
                 .layer(CookieManagerLayer::new()),
         );
+        let listener = TcpListener::bind(&config.addr)
+            .await
+            .expect("failed to bind to socket");
         let shutdown_signal = shutdown_notify.subscribe();
-        let server = Server::bind(&config.addr)
-            .serve(app.into_make_service())
+        let server = axum::serve(listener, router)
             .with_graceful_shutdown(wait_for_shutdown(shutdown_signal));
 
         info!("listening on {}", config.addr);
@@ -118,7 +121,7 @@ fn main() {
                 Ok(Err(e)) => error!("database connection error: {}", e),
                 Err(e) => error!("database executor unexpectedly stopped: {}", e),
             },
-            res = tokio::spawn(server) => match res {
+            res = tokio::spawn(server.into_future()) => match res {
                 Ok(Ok(_)) => info!("server shutting down"),
                 Ok(Err(e)) => error!("server unexpectedly stopped: {}", e),
                 Err(e) => error!("server executor unexpectedly stopped: {}", e),
