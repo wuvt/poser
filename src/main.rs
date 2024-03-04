@@ -81,7 +81,7 @@ fn main() {
 
         let mut axum_notify = shutdown.subscribe();
         let server = axum::serve(listener, router)
-            .with_graceful_shutdown(async move { _ = axum_notify.recv().await });
+            .with_graceful_shutdown(async move { axum_notify.recv().await });
 
         info!("listening for connections on: {}", config.addr);
         tokio::select! {
