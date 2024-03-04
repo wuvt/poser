@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+anyhow = "1.0"
 axum = { version = "0.7", features = ["macros"] }
 base64ct = "1.6"
 openidconnect = "3.5"
