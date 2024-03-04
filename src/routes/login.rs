@@ -19,12 +19,10 @@ use tracing::error;
 /// Errors returned by the handler.
 #[derive(Error, Clone, Debug)]
 pub enum Error {
-    #[error("invalid session token")]
-    InvalidSessionToken,
     #[error("error generating OIDC state")]
-    StateError,
+    GenerateState,
     #[error("error generating OIDC cookie")]
-    CookieError,
+    GenerateCookie,
 }
 
 /// A handler to start the OIDC flow.
@@ -41,7 +39,7 @@ pub async fn login_handler(
         .to_state(&state.config.cookie.secret)
         .map_err(|e| {
             error!("error generating OIDC state: {}", e);
-            Error::StateError
+            Error::GenerateState
         })?;
     let nonce = oidc_state.get_nonce().clone();
 
@@ -68,7 +66,7 @@ pub async fn login_handler(
                 .to_cookie(&state.config.cookie.secret)
                 .map_err(|e| {
                     error!("error generating OIDC cookie: {}", e);
-                    Error::CookieError
+                    Error::GenerateCookie
                 })?,
         ))
         .secure(state.config.cookie.secure)
@@ -82,10 +80,7 @@ pub async fn login_handler(
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let response = match self {
-            Error::InvalidSessionToken => {
-                json!({ "error": "invalid request" })
-            }
-            Error::StateError | Error::CookieError => json!({ "error": "internal error" }),
+            Error::GenerateState | Error::GenerateCookie => json!({ "error": "internal error" }),
         };
 
         (StatusCode::BAD_REQUEST, Json(response)).into_response()

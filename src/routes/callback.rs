@@ -37,11 +37,11 @@ pub enum Error {
     #[error("missing id token")]
     MissingToken,
     #[error("error exchanging code")]
-    CodeError,
+    CodeExchange,
     #[error("error verifying token")]
-    TokenError,
+    VerifyToken,
     #[error("error interacting with database")]
-    DatabaseError,
+    DatabaseInsert,
 }
 
 /// A handler for receiving the callback during the OIDC flow.
@@ -107,7 +107,7 @@ async fn get_token(
         .await
         .map_err(|e| {
             error!("failed to exchange code for token: {}", e);
-            Error::CodeError
+            Error::CodeExchange
         })?;
 
     let token = token_response.extra_fields().id_token().ok_or_else(|| {
@@ -118,17 +118,17 @@ async fn get_token(
     let id_token_verifier = client.id_token_verifier();
     let claims = token.claims(&id_token_verifier, nonce).map_err(|e| {
         error!("failed to verify id token: {}", e);
-        Error::TokenError
+        Error::VerifyToken
     })?;
 
     let subj = claims.subject();
     let name = claims.name().and_then(|s| s.get(None)).ok_or_else(|| {
         error!("name missing from id token");
-        Error::TokenError
+        Error::VerifyToken
     })?;
     let email = claims.email().ok_or_else(|| {
         error!("email missing from id token");
-        Error::TokenError
+        Error::VerifyToken
     })?;
     let expiration = claims
         .expiration()
@@ -177,7 +177,7 @@ async fn create_session(
     .await
     .map_err(|e| {
         error!("error creating session: {}", e);
-        Error::DatabaseError
+        Error::DatabaseInsert
     })
     .map(|r| r.get::<_, Uuid>("id"))
 }
@@ -189,8 +189,8 @@ impl IntoResponse for Error {
             | Error::MissingState
             | Error::MissingCode
             | Error::MissingCookie => json!({ "error": "invalid request" }),
-            Error::MissingToken | Error::TokenError => json!({ "error": "authentication error" }),
-            Error::InvalidDateTime | Error::CodeError | Error::DatabaseError => {
+            Error::MissingToken | Error::VerifyToken => json!({ "error": "authentication error" }),
+            Error::InvalidDateTime | Error::CodeExchange | Error::DatabaseInsert => {
                 json!({ "error": "internal error" })
             }
         };
