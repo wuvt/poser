@@ -37,11 +37,11 @@ pub enum Error {
     #[error("missing id token")]
     MissingToken,
     #[error("error exchanging code")]
-    CodeError,
+    CodeExchange,
     #[error("error verifying token")]
-    TokenError,
+    VerifyToken,
     #[error("error interacting with database")]
-    DatabaseError,
+    DatabaseInsert,
 }
 
 /// A handler for receiving the callback during the OIDC flow.
@@ -86,11 +86,11 @@ pub async fn callback_handler(
     let id = create_session(&state.db, &token, &expiration).await?;
 
     cookies.add(
-        Cookie::build(state.config.cookie.name, id.simple().to_string())
+        Cookie::build((state.config.cookie.name, id.simple().to_string()))
             .secure(state.config.cookie.secure)
             .http_only(true)
             .expires(expiration)
-            .finish(),
+            .build(),
     );
 
     Ok(Redirect::to(oidc.get_redirect()))
@@ -107,7 +107,7 @@ async fn get_token(
         .await
         .map_err(|e| {
             error!("failed to exchange code for token: {}", e);
-            Error::CodeError
+            Error::CodeExchange
         })?;
 
     let token = token_response.extra_fields().id_token().ok_or_else(|| {
@@ -118,19 +118,22 @@ async fn get_token(
     let id_token_verifier = client.id_token_verifier();
     let claims = token.claims(&id_token_verifier, nonce).map_err(|e| {
         error!("failed to verify id token: {}", e);
-        Error::TokenError
+        Error::VerifyToken
     })?;
 
     let subj = claims.subject();
     let name = claims.name().and_then(|s| s.get(None)).ok_or_else(|| {
         error!("name missing from id token");
-        Error::TokenError
+        Error::VerifyToken
     })?;
     let email = claims.email().ok_or_else(|| {
         error!("email missing from id token");
-        Error::TokenError
+        Error::VerifyToken
     })?;
-    let expiration = claims.expiration().timestamp_nanos();
+    let expiration = claims
+        .expiration()
+        .timestamp_nanos_opt()
+        .expect("todo: fix timestamp handling before 2262");
 
     Ok((
         UserToken {
@@ -174,7 +177,7 @@ async fn create_session(
     .await
     .map_err(|e| {
         error!("error creating session: {}", e);
-        Error::DatabaseError
+        Error::DatabaseInsert
     })
     .map(|r| r.get::<_, Uuid>("id"))
 }
@@ -186,8 +189,8 @@ impl IntoResponse for Error {
             | Error::MissingState
             | Error::MissingCode
             | Error::MissingCookie => json!({ "error": "invalid request" }),
-            Error::MissingToken | Error::TokenError => json!({ "error": "authentication error" }),
-            Error::InvalidDateTime | Error::CodeError | Error::DatabaseError => {
+            Error::MissingToken | Error::VerifyToken => json!({ "error": "authentication error" }),
+            Error::InvalidDateTime | Error::CodeExchange | Error::DatabaseInsert => {
                 json!({ "error": "internal error" })
             }
         };

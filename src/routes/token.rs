@@ -28,7 +28,7 @@ pub enum Error {
     #[error("missing session token")]
     MissingSessionToken,
     #[error("error generating id token")]
-    TokenError,
+    GenerateToken,
 }
 
 /// A handler to generate a short-lived id token from a user's session token.
@@ -92,7 +92,7 @@ async fn build_token(
 
     token.sign(key, lifetime).map_err(|e| {
         error!("error generating token: {}", e);
-        Error::TokenError
+        Error::GenerateToken
     })
 }
 
@@ -103,7 +103,7 @@ impl IntoResponse for Error {
                 json!({ "error": "invalid request" })
             }
             Error::InvalidSession => json!({ "error": "bad session" }),
-            Error::TokenError => json!({ "error": "internal error" }),
+            Error::GenerateToken => json!({ "error": "internal error" }),
         };
 
         (StatusCode::BAD_REQUEST, Json(response)).into_response()
